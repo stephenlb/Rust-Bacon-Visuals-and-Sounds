@@ -18,7 +18,32 @@ configured in `bacon.toml`):
 cargo install --locked --features sound bacon
 ```
 
+Then copy `bacon.toml` and `bacon-tui.sh` into the root of your Rust project —
+the directory holding its `Cargo.toml`:
+
+```sh
+cd /path/to/your-rust-project
+cp /path/to/bacon-tui/bacon.toml .
+cp /path/to/bacon-tui/bacon-tui.sh .
+chmod +x bacon-tui.sh
+```
+
+Or, in one step from anywhere:
+
+```sh
+git clone https://github.com/stephenlb/Rust-Bacon-Visuals-and-Sounds /tmp/bacon-tui
+install -m 755 /tmp/bacon-tui/bacon-tui.sh /path/to/your-rust-project/
+install -m 644 /tmp/bacon-tui/bacon.toml   /path/to/your-rust-project/
+```
+
+Both files belong at the project root: bacon reads `bacon.toml` from the
+directory you launch it in, and `bacon-tui.sh` runs `cargo` there too. If your
+project already has a `bacon.toml`, merge the `[sound]` and `[jobs.*]` sections
+in rather than overwriting it.
+
 ## Run
+
+Run from your project root:
 
 The animated dashboard, which runs `bacon --headless` for you and renders its
 JSON report:
