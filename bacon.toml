@@ -1,0 +1,47 @@
+# Bacon config — https://dystroy.org/bacon
+# Sound requires bacon built with the `sound` feature:
+#   cargo install --locked --features sound bacon
+
+[sound]
+enabled = true
+base_volume = "100%"
+
+# `allow_warnings` must be true for warnings to count as success. Bacon's
+# is_success() is
+#   !(errors != 0 || (!allow_failures && test_fails != 0)
+#                 || (!allow_warnings && warnings != 0))
+# and allow_warnings defaults to FALSE — so a warning-only build is judged a
+# failure and fires on_failure, no matter what on_success is set to.
+
+[jobs.check]
+command = ["cargo", "check", "--color", "always"]
+need_stdout = false
+allow_warnings = true
+on_success = "play-sound(name=success,volume=70)"
+on_failure = "play-sound(name=short-beep-tone,volume=90)"
+
+[jobs.check-all]
+command = ["cargo", "check", "--all-targets", "--color", "always"]
+need_stdout = false
+allow_warnings = true
+on_success = "play-sound(name=success,volume=70)"
+on_failure = "play-sound(name=short-beep-tone,volume=90)"
+
+# Set allow_warnings = false here if you want clippy lints to beep as failures —
+# warnings are arguably clippy's whole point.
+[jobs.clippy]
+command = ["cargo", "clippy", "--all-targets", "--color", "always"]
+need_stdout = false
+allow_warnings = true
+on_success = "play-sound(name=success,volume=70)"
+on_failure = "play-sound(name=short-beep-tone,volume=90)"
+
+[jobs.test]
+command = ["cargo", "test", "--color", "always", "--", "--color", "always"]
+need_stdout = true
+allow_warnings = true
+on_success = "play-sound(name=success,volume=70)"
+on_failure = "play-sound(name=short-beep-tone,volume=90)"
+
+# Default job run on startup
+default_job = "check"
