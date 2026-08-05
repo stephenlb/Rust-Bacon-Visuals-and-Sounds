@@ -5,6 +5,10 @@ background Rust code checker. Drop `bacon.toml` and `bacon-tui.sh` into a Rust
 project and get a live scene that turns green when the build is clean, amber
 while compiling, and pulses red on errors — with sound.
 
+![Clean build: sunny pastoral scene with a grazing animal and a passing status bar](images/success.png)
+
+![Build failed: dark red screen listing the compiler error and its source location](images/fail.png)
+
 ## Install
 
 Install bacon with the `sound` feature (required for the success/failure chimes
