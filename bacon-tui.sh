@@ -512,10 +512,10 @@ draw_meadow() {
 # a flower. One tick counter drives both position and gait (f/3, so ~4 cols per
 # second): the crossing is split into 4 walking segments with a sit between
 # each, so `tick` maps to (segment, offset) with no state to carry per frame.
-CAT_BACK="    ▁▄▄▄▄"           # arched back, then the ears line up over the eyes
+CAT_BACK="    ▁▂▂▂▂"           # arched back, then the ears line up over the eyes
 CAT_EARS='/\_/\'
 CAT_LEGS=("   ╱▌ ▐╲" "   ▌╲ ╱▐")
-CAT_SIT="   ▚▄▄▟"
+CAT_SIT="   ▟▟▟▟"
 CAT_TAILS=("⌒" "~" "⌢" "~")
 CAT_PAUSE=18                    # ticks spent sitting at each stop
 
