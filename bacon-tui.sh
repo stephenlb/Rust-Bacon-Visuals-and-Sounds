@@ -7,9 +7,14 @@
 # readable report after every mission (`[exports.json_report]`), and tails
 # bacon's own output into a log file. The report drives the animation:
 #
-#   errors / test failures  ->  red pulse, fading red -> black -> red
-#   clean                   ->  lush green sunny day (sun, clouds, birds, cat)
+#   errors / test failures  ->  one of three fail scenes, picked at random
+#                               (red pulse · thunderstorm · signal glitch)
+#   clean                   ->  one of three success scenes, picked at random
+#                               (sunny meadow · starry night · fireworks)
 #   compiling               ->  amber shimmer
+#
+# A fresh variant is drawn each time the state flips, and never the same one
+# twice in a row.
 #
 # Keys: q quit · 1-4 switch job · r rerun · l cycle log view · p pause anim
 #
@@ -208,7 +213,8 @@ sty() { # fg r g b, bg r g b -> STY
 
 # BG_KIND selects how sty_row resolves the backdrop under an overlay. Using
 # \033[49m instead would punch default-background holes in the scene.
-#   1 fail pulse (formula)  2 building pulse (formula)  3 sky/hill  0 flat
+#   1 fail pulse (formula)  2 building pulse (formula)  3 sky/hill
+#   4 per-row table (BGROW_*, filled by the scene)  0 flat
 BG_KIND=0
 BG_LVL=0
 bg_at() { # row -> BGR BGG BGB
@@ -227,6 +233,7 @@ bg_at() { # row -> BGR BGG BGB
            else
                BGR=${HILL_R[$1]:-0}; BGG=${HILL_G[$1]:-0}; BGB=${HILL_B[$1]:-0}
            fi ;;
+        4) BGR=${BGROW_R[$1]:-12}; BGG=${BGROW_G[$1]:-12}; BGB=${BGROW_B[$1]:-16} ;;
         *) BGR=12; BGG=12; BGB=16 ;;
     esac
 }
@@ -287,6 +294,30 @@ palette() {
 # ------------------------------------------------------------- primitives ----
 
 OUT=""
+
+# Scenes that need a backdrop the per-row formulas in bg_at() cannot express
+# (night gradients, storm slate, glitch bands) fill this table instead: one
+# rgb triple plus one ready-to-write fill string per row, rebuilt only when
+# BG_KEY changes (scene name + height), then replayed like the cached pulses.
+BG_KEY=""
+BGROW_R=(); BGROW_G=(); BGROW_B=(); BGFILL=()
+
+bgtable_reset() { BGROW_R=(); BGROW_G=(); BGROW_B=(); BGFILL=(); }
+
+bgtable_row() { # row r g b
+    BGROW_R[$1]=$2; BGROW_G[$1]=$3; BGROW_B[$1]=$4
+    BGFILL[$1]=$'\033['"$1;1H"$'\033[39m\033[48;2;'"$2;$3;$4"m"$SPACES"
+}
+
+bgtable_paint() {
+    local r
+    for (( r=1; r<=H-1; r++ )); do OUT+=${BGFILL[$r]}; done
+}
+
+# style for text sitting on the table's backdrop at that row
+bgtable_sty() { # fg r g b, row
+    sty "$1" "$2" "$3" "${BGROW_R[$4]:-12}" "${BGROW_G[$4]:-12}" "${BGROW_B[$4]:-16}"
+}
 
 put() { # row col style text  (clipped to the screen)
     local r=$1 c=$2 st=$3 t=$4 len cut
@@ -561,7 +592,7 @@ draw_cat() { # frame
     fi
 }
 
-scene_ok() {
+scene_ok_meadow() {
     local f=$1 r pulse
     pulse=${SIN[$(( f % 60 ))]}     # bash expands all `local` words up front
     BG_KIND=3
@@ -585,11 +616,225 @@ scene_ok() {
     fi
 }
 
+# --------------------------------------------------- happy scene: starry ----
+
+# Deep blue -> indigo down the screen, a moon, drifting stars that twinkle on
+# their own phase, and a shooting star that crosses every few seconds.
+STAR_GLYPH=("·" "✦" "✧" "*" "⋆")
+MOON=("  ▄███▄  " " ███████▖" "████████ " " ███████▘" "  ▀███▀  ")
+
+scene_ok_night() {
+    local f=$1 r t i x y ph lum g msg top ch
+    BG_KIND=4
+    if [ "$BG_KEY" != "night$H" ]; then
+        bgtable_reset
+        for (( r=1; r<=H-1; r++ )); do
+            t=$(( (r-1)*1000 / (H>1 ? H-1 : 1) ))
+            bgtable_row "$r" $(( 8 + 34*t/1000 )) $(( 12 + 18*t/1000 )) \
+                             $(( 46 + 42*t/1000 ))
+        done
+        BG_KEY="night$H"
+    fi
+    bgtable_paint
+
+    # moon, upper right, with a soft halo that breathes
+    local mr=$(( 2 + H/10 )) mc=$(( W - W/6 ))
+    local halo=$(( 200 + ${SIN[$(( f % 60 ))]} / 20 ))
+    for i in 0 1 2 3 4; do
+        r=$(( mr + i ))
+        (( r < 1 || r > H-2 )) && continue
+        bgtable_sty 250 250 "$halo" "$r"
+        put "$r" $(( mc - 4 )) "$STY" "${MOON[$i]}"
+    done
+
+    # stars: fixed lattice, each with its own twinkle phase and drift
+    for (( i=0; i<70; i++ )); do
+        y=$(( 1 + (i * 7 + i/5) % (H - 2) ))
+        x=$(( 1 + (i * 29 + i*i*5 + f/24) % W ))
+        ph=${SIN[$(( (f*2 + i*11) % 60 ))]}
+        lum=$(( 120 + ph * 135 / 1000 ))
+        bgtable_sty "$lum" "$lum" $(( lum > 235 ? 255 : lum + 20 )) "$y"
+        put "$y" "$x" "$STY" "${STAR_GLYPH[$(( i % 5 ))]}"
+    done
+
+    # a shooting star every ~7s, drawn as a fading diagonal tail
+    local sc=$(( (f / 3) % 100 ))
+    if (( sc < 22 )); then
+        local sx=$(( 4 + sc * (W - 8) / 22 )) sy=$(( 2 + sc * (H/3) / 22 ))
+        for i in 0 1 2 3 4; do
+            r=$(( sy - i )); x=$(( sx - i*2 ))
+            (( r < 1 || r > H-2 || x < 1 )) && continue
+            g=$(( 255 - i * 42 ))
+            bgtable_sty "$g" "$g" 255 "$r"
+            (( i == 0 )) && ch="✦" || ch="╲"
+            put "$r" "$x" "$STY" "$ch"
+        done
+    fi
+
+    top=$(( H/2 - 4 ))
+    (( top < 1 )) && top=1
+    if (( H >= 18 && W >= 60 )); then
+        draw_big "$top" BANNER_OK 235 240 255  40 60 120
+        top=$(( top + 6 ))
+    else
+        msg="✓  ALL GOOD"
+        center ${#msg}
+        bgtable_sty 235 240 255 "$top"
+        put "$top" "$COL" $'\033[1m'"$STY" "$msg"
+        top=$(( top + 2 ))
+    fi
+    msg="all quiet · nothing to fix"
+    center ${#msg}
+    bgtable_sty 150 165 210 "$top"
+    put "$top" "$COL" "$STY" "$msg"
+}
+
+# ------------------------------------------------ happy scene: fireworks ----
+
+# Six shells on staggered cycles: each climbs as a trailed rocket, then bursts
+# into an expanding ring of sparks that fades to embers.
+FW_SPARK=("✳" "✺" "✷" "·" "˙")
+
+scene_ok_fireworks() {
+    local f=$1 r t i x y msg top ch
+    BG_KIND=4
+    if [ "$BG_KEY" != "fw$H" ]; then
+        bgtable_reset
+        for (( r=1; r<=H-1; r++ )); do
+            t=$(( (r-1)*1000 / (H>1 ? H-1 : 1) ))
+            bgtable_row "$r" $(( 10 + 12*t/1000 )) $(( 8 + 10*t/1000 )) \
+                             $(( 26 + 26*t/1000 ))
+        done
+        BG_KEY="fw$H"
+    fi
+    bgtable_paint
+
+    # city skyline silhouette along the bottom, so the shells have somewhere
+    # to launch from
+    local sky_row=$(( H - 2 ))
+    if (( sky_row > 3 )); then
+        local line="" c
+        for (( c=1; c<=W; c++ )); do
+            if (( ${SIN[$(( (c * 210 / W) % 60 ))]} > 500 )); then
+                line+="█"
+            else
+                line+="▄"
+            fi
+        done
+        bgtable_sty 22 20 40 "$sky_row"
+        put "$sky_row" 1 "$STY" "$line"
+        bgtable_sty 18 16 34 $(( sky_row + 1 ))
+        put $(( sky_row + 1 )) 1 "$STY" "${SPACES// /█}"
+    fi
+
+    local cyc=54 launch=$(( H > 12 ? H - 4 : H - 1 ))
+    local sh ph cx cy rad ring j dx dy fr fg fb
+    for sh in 0 1 2 3 4 5; do
+        ph=$(( (f + sh * 9) % cyc ))
+        cx=$(( 4 + (sh * 37 + sh*sh*11) % (W - 8) ))
+        cy=$(( 3 + (sh * 5) % (H/3 + 1) )); (( cy < 2 )) && cy=2
+        # shell hue, one per launcher
+        case $(( sh % 3 )) in
+            0) fr=255; fg=210; fb=110 ;;
+            1) fr=255; fg=130; fb=180 ;;
+            *) fr=150; fg=225; fb=255 ;;
+        esac
+        if (( ph < 18 )); then
+            # climbing: head plus a short sparking trail
+            y=$(( launch - (launch - cy) * ph / 18 ))
+            for i in 0 1 2; do
+                r=$(( y + i ))
+                (( r < 1 || r > H-1 )) && continue
+                bgtable_sty $(( fr - i*40 )) $(( fg - i*40 )) $(( fb > 60 ? fb - i*30 : fb )) "$r"
+                (( i == 0 )) && ch="▲" || ch="│"
+                put "$r" "$cx" "$STY" "$ch"
+            done
+        elif (( ph < 40 )); then
+            # bursting: ring radius grows, brightness falls
+            rad=$(( (ph - 18) * 7 / 22 + 1 ))
+            local fade=$(( 1000 - (ph - 18) * 1000 / 22 ))
+            local gl=$(( fade / 4 + 1 ))
+            ring=$(( (ph - 18) % 4 ))
+            for (( j=0; j<12; j++ )); do
+                dx=$(( ${SIN[$(( (j * 5 + 15) % 60 ))]} - 500 ))
+                dy=$(( ${SIN[$(( (j * 5) % 60 ))]} - 500 ))
+                x=$(( cx + dx * rad * 2 / 500 ))
+                y=$(( cy + dy * rad / 500 ))
+                (( y < 1 || y > H-1 || x < 1 || x > W )) && continue
+                bgtable_sty $(( fr * gl / 250 > 255 ? 255 : fr * gl / 250 )) \
+                            $(( fg * gl / 250 > 255 ? 255 : fg * gl / 250 )) \
+                            $(( fb * gl / 250 > 255 ? 255 : fb * gl / 250 )) "$y"
+                put "$y" "$x" "$STY" "${FW_SPARK[$ring]}"
+            done
+            # the flash at the core, only while the burst is young
+            if (( ph < 22 )); then
+                bgtable_sty 255 255 240 "$cy"
+                put "$cy" "$cx" "$STY" "✺"
+            fi
+        fi
+    done
+
+    top=$(( H/2 - 4 ))
+    (( top < 1 )) && top=1
+    local pulse=${SIN[$(( f % 60 ))]}
+    if (( H >= 18 && W >= 60 )); then
+        draw_big "$top" BANNER_OK 255 $(( 235 + pulse/50 )) 200  90 40 20
+        top=$(( top + 6 ))
+    else
+        msg="✓  ALL GOOD"
+        center ${#msg}
+        bgtable_sty 255 240 200 "$top"
+        put "$top" "$COL" $'\033[1m'"$STY" "$msg"
+        top=$(( top + 2 ))
+    fi
+    msg="green across the board"
+    center ${#msg}
+    bgtable_sty 240 200 150 "$top"
+    put "$top" "$COL" "$STY" "$msg"
+}
+
 # -------------------------------------------------------------- fail scene ---
+
+# The count line, the rule under it and the failing items are the same in every
+# fail variant; only the backdrop and banner differ. Reads the caller's BG_KIND,
+# so it picks up whichever backdrop the variant installed.
+fail_details() { # top_row
+    local top=$1 head bar i n=0 line row max
+    if (( TEST_FAILS > 0 )); then
+        head="$ERRORS error(s) · $TEST_FAILS test failure(s)"
+    else
+        head="$ERRORS error(s)"
+    fi
+    center ${#head}
+    sty_row 255 190 190 "$top"
+    put "$top" "$COL" "$STY" "$head"
+    bar=$(( W * 2 / 3 ))
+    center "$bar"
+    sty_row 150 40 40 $(( top + 1 ))
+    put $(( top + 1 )) "$COL" "$STY" "${DASHES:0:bar}"
+    max=$(( H - top - 3 ))
+    (( max > 12 )) && max=12
+    for (( i=0; i<${#ITEMS[@]} && n<max; i++ )); do
+        line=${ITEMS[$i]}
+        (( ${#line} > W-8 )) && line="${line:0:W-11}..."
+        row=$(( top + 2 + n ))
+        case "$line" in
+            --\>*) sty_row 235 170 170 "$row"; put "$row" 5 "$STY" "  $line" ;;
+            *)     sty_row 255 235 235 "$row"; put "$row" 5 $'\033[1m'"$STY" "$line" ;;
+        esac
+        n=$((n+1))
+    done
+    (( ${#ITEMS[@]} > n )) && {
+        row=$(( top + 2 + n ))
+        sty_row 200 130 130 "$row"
+        put "$row" 5 "$STY" "… $(( ${#ITEMS[@]} - n )) more (press l for full output)"
+    }
+    return 0
+}
 
 # The pulse only ever takes 60 discrete levels, so the whole backdrop for a
 # level is built once and replayed from FAILBG afterwards.
-scene_fail() {
+scene_fail_pulse() {
     local f=$1 idx lvl
     idx=$(( (f * 5 / 2) % 60 ))          # red -> black -> red pulse
     lvl=${SIN[$idx]}
@@ -619,39 +864,184 @@ scene_fail() {
         put "$top" "$COL" $'\033[1m'"$STY" "$msg"
         top=$(( top + 2 ))
     fi
-    local head
-    if (( TEST_FAILS > 0 )); then
-        head="$ERRORS error(s) · $TEST_FAILS test failure(s)"
-    else
-        head="$ERRORS error(s)"
-    fi
-    center ${#head}
-    sty_row 255 190 190 "$top"
-    put "$top" "$COL" "$STY" "$head"
-    local bar=$(( W * 2 / 3 ))
-    center "$bar"
-    sty_row 150 40 40 $(( top + 1 ))
-    put $(( top + 1 )) "$COL" "$STY" "${DASHES:0:bar}"
-    # failing items, indented under the banner
-    local i n=0 line row max=$(( H - top - 3 ))
-    (( max > 12 )) && max=12
-    for (( i=0; i<${#ITEMS[@]} && n<max; i++ )); do
-        line=${ITEMS[$i]}
-        (( ${#line} > W-8 )) && line="${line:0:W-11}..."
-        row=$(( top + 2 + n ))
-        case "$line" in
-            --\>*) sty_row 235 170 170 "$row"; put "$row" 5 "$STY" "  $line" ;;
-            *)     sty_row 255 235 235 "$row"; put "$row" 5 $'\033[1m'"$STY" "$line" ;;
-        esac
-        n=$((n+1))
-    done
-    (( ${#ITEMS[@]} > n )) && {
-        row=$(( top + 2 + n ))
-        sty_row 200 130 130 "$row"
-        put "$row" 5 "$STY" "… $(( ${#ITEMS[@]} - n )) more (press l for full output)"
-    }
-    return 0
+    fail_details "$top"
 }
+
+# ------------------------------------------------- fail scene: thunderstorm --
+
+# Slate-grey storm sky with slanted rain. Lightning strikes on a fixed cycle:
+# two quick flashes that wash the whole backdrop pale, then darkness again.
+scene_fail_storm() {
+    local f=$1 r t i x y top msg flash=0 strike ch
+    # 0..2 of the 46-frame cycle is the first flash, 4..5 the flicker back
+    strike=$(( f % 46 ))
+    (( strike < 3 || (strike >= 5 && strike < 7) )) && flash=1
+
+    BG_KIND=4
+    local key="storm$H$flash"
+    if [ "$BG_KEY" != "$key" ]; then
+        bgtable_reset
+        for (( r=1; r<=H-1; r++ )); do
+            t=$(( (r-1)*1000 / (H>1 ? H-1 : 1) ))
+            if (( flash )); then
+                bgtable_row "$r" $(( 120 + 40*t/1000 )) $(( 116 + 34*t/1000 )) \
+                                 $(( 130 + 30*t/1000 ))
+            else
+                bgtable_row "$r" $(( 34 + 22*t/1000 )) $(( 34 + 20*t/1000 )) \
+                                 $(( 44 + 22*t/1000 ))
+            fi
+        done
+        BG_KEY=$key
+    fi
+    bgtable_paint
+
+    # rain: each drop is a fixed lattice point scrolled down and left over time,
+    # so the sheet moves as one instead of shimmering per drop
+    local dr dg db
+    for (( i=0; i<130; i++ )); do
+        y=$(( 1 + (i * 3 + f + i/7) % (H - 1) ))
+        x=$(( 1 + (i * 17 + i*i*3 + W - (f * 2 + y) % W) % W ))
+        if (( flash )); then dr=210; dg=214; db=226
+        else                 dr=110; dg=124; db=160
+        fi
+        bgtable_sty "$dr" "$dg" "$db" "$y"
+        (( i % 4 )) && ch="╱" || ch="│"
+        put "$y" "$x" "$STY" "$ch"
+    done
+
+    # the bolt itself, only on the leading flash
+    if (( strike < 3 )); then
+        local bx=$(( W/3 + (f / 46) * 13 % (W/3) )) bolt=("▏" "╲" "▕" "╱")
+        for (( i=0; i<H/2 && i<12; i++ )); do
+            r=$(( 1 + i ))
+            (( r > H-2 )) && break
+            x=$(( bx + (i % 4 < 2 ? i : -i) / 2 ))
+            bgtable_sty 255 255 235 "$r"
+            put "$r" "$x" "$STY" "${bolt[$(( i % 4 ))]}"
+        done
+    fi
+
+    top=$(( H/2 - 7 ))
+    (( top < 1 )) && top=1
+    if (( H >= 16 && W >= 70 )); then
+        draw_big "$top" BANNER_FAIL 255 236 236  30 30 44
+        top=$(( top + 6 ))
+    else
+        msg="✗  BUILD FAILED"
+        center ${#msg}
+        top=2
+        sty_row 255 236 236 "$top"
+        put "$top" "$COL" $'\033[1m'"$STY" "$msg"
+        top=$(( top + 2 ))
+    fi
+    fail_details "$top"
+}
+
+# ------------------------------------------------- fail scene: signal glitch --
+
+# A broken-transmission look: dark red base, horizontal tear bands that jump
+# every few frames, scanlines drifting up, and the banner torn sideways.
+GLITCH_JUNK='▓▒░█▚▞╳┼╱╲▘▝▖▗'
+
+scene_fail_glitch() {
+    local f=$1 r i x y top msg tear band
+    # the tear pattern only changes every 3rd frame, so the cache still pays off
+    band=$(( (f / 3) % 8 ))
+
+    BG_KIND=4
+    local key="glitch$H$band"
+    if [ "$BG_KEY" != "$key" ]; then
+        bgtable_reset
+        for (( r=1; r<=H-1; r++ )); do
+            # scanline darkening plus a bright torn band at one moving row
+            if (( (r + band) % 9 == 0 )); then
+                bgtable_row "$r" 92 14 20
+            elif (( (r + band) % 2 == 0 )); then
+                bgtable_row "$r" 26 6 10
+            else
+                bgtable_row "$r" 44 8 14
+            fi
+        done
+        BG_KEY=$key
+    fi
+    bgtable_paint
+
+    # torn rows of junk glyphs, offset per row so the picture looks displaced
+    for (( i=0; i<9; i++ )); do
+        y=$(( 1 + (i * 7 + band * 3) % (H - 1) ))
+        tear=$(( (i * 13 + f) % W ))
+        local jw=$(( 8 + (i * 5) % 22 )) s="" j
+        for (( j=0; j<jw; j++ )); do
+            x=$(( (i*3 + j*5 + f) % 14 ))
+            s+=${GLITCH_JUNK:x:1}
+        done
+        bgtable_sty $(( 200 + i*5 > 255 ? 255 : 200 + i*5 )) 60 70 "$y"
+        put "$y" $(( tear + 1 )) "$STY" "$s"
+    done
+
+    # chromatic-split bars at the edges
+    for (( i=0; i<4; i++ )); do
+        y=$(( 2 + (i * 11 + band * 2) % (H - 3) ))
+        bgtable_sty 90 200 220 "$y"
+        put "$y" 1 "$STY" "${DASHES:0:$(( 3 + i * 2 ))}"
+        bgtable_sty 235 90 120 "$y"
+        put "$y" $(( W - 4 - i )) "$STY" "${DASHES:0:4}"
+    done
+
+    top=$(( H/2 - 7 ))
+    (( top < 1 )) && top=1
+    if (( H >= 16 && W >= 70 )); then
+        # draw the banner twice, offset, for a chromatic-aberration ghost
+        local shift=$(( (f / 3) % 3 - 1 ))
+        local rows w
+        eval 'rows=("${BANNER_FAIL[@]}"); w=$BANNER_FAIL_W'
+        center "$w"
+        for (( i=0; i<5; i++ )); do
+            r=$(( top + i ))
+            (( r > H-2 )) && break
+            bgtable_sty 60 180 200 "$r"
+            put "$r" $(( COL + shift * 2 )) "$STY" "${rows[$i]}"
+            bgtable_sty 255 220 220 "$r"
+            put "$r" "$COL" "$STY" "${rows[$i]}"
+        done
+        top=$(( top + 6 ))
+    else
+        msg="✗  BUILD FAILED"
+        center ${#msg}
+        top=2
+        sty_row 255 220 220 "$top"
+        put "$top" "$COL" $'\033[1m'"$STY" "$msg"
+        top=$(( top + 2 ))
+    fi
+    fail_details "$top"
+}
+
+# ------------------------------------------------------------ scene picker ---
+
+# Which variant is on screen is chosen when the state flips, not per frame —
+# otherwise the scene would shuffle at 14fps. `pick_scene` never repeats the
+# variant it last handed out for that state.
+OK_VARIANTS=(scene_ok_meadow scene_ok_night scene_ok_fireworks)
+FAIL_VARIANTS=(scene_fail_pulse scene_fail_storm scene_fail_glitch)
+OK_PICK=0
+FAIL_PICK=0
+
+pick_scene() { # ok|fail
+    local n step
+    if [ "$1" = ok ]; then
+        n=${#OK_VARIANTS[@]}
+        step=$(( 1 + RANDOM % (n - 1) ))       # never 0, so never a repeat
+        OK_PICK=$(( (OK_PICK + step) % n ))
+    else
+        n=${#FAIL_VARIANTS[@]}
+        step=$(( 1 + RANDOM % (n - 1) ))
+        FAIL_PICK=$(( (FAIL_PICK + step) % n ))
+    fi
+    BG_KEY=""       # the incoming variant rebuilds its own backdrop table
+}
+
+scene_ok()   { "${OK_VARIANTS[$OK_PICK]}" "$1"; }
+scene_fail() { "${FAIL_VARIANTS[$FAIL_PICK]}" "$1"; }
 
 # ----------------------------------------------------------- building scene --
 
@@ -793,6 +1183,9 @@ OK_DELAY_FRAMES=$(awk -v ms="$OK_DELAY_MS" -v s="$FRAME_SLEEP" -v o="$FRAME_OVER
 SCENE_H=0
 PREV_OUT=""
 REDRAW=1
+# roll the first variant of each kind, so a run does not always open the same way
+OK_PICK=$(( RANDOM % ${#OK_VARIANTS[@]} ))
+FAIL_PICK=$(( RANDOM % ${#FAIL_VARIANTS[@]} ))
 
 printf '\033[?1049h\033[?25l\033[2J'
 term_size
@@ -847,6 +1240,13 @@ while :; do
         OK_HOLD=$OK_DELAY_FRAMES
     elif [ "$STATE" != ok ]; then
         OK_HOLD=0
+    fi
+    # entering ok/fail rolls a fresh variant for that state
+    if [ "$STATE" != "$PREV_STATE" ]; then
+        case "$STATE" in
+            ok)   pick_scene ok ;;
+            fail) pick_scene fail ;;
+        esac
     fi
     PREV_STATE=$STATE
     if (( OK_HOLD > 0 )); then
