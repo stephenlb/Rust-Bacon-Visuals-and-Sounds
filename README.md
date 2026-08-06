@@ -18,7 +18,7 @@ configured in `bacon.toml`):
 cargo install --locked --features sound bacon
 ```
 
-Then copy `bacon.toml` and `bacon-tui.sh` into the root of your Rust project —
+Then copy `bacon.toml` and `bacon-tui.sh` into the root of your Rust project,
 the directory holding its `Cargo.toml`:
 
 ```sh
