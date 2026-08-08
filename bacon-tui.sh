@@ -7,16 +7,18 @@
 # readable report after every mission (`[exports.json_report]`), and tails
 # bacon's own output into a log file. The report drives the animation:
 #
-#   errors / test failures  ->  one of twelve fail scenes, picked at random
+#   errors / test failures  ->  one of fifteen fail scenes, picked at random
 #                               (red pulse · thunderstorm · signal glitch ·
 #                                lava · matrix rain · alarm klaxon ·
 #                                crumbling wall · vortex · ember storm ·
-#                                shattered glass · bug swarm · meltdown)
-#   clean                   ->  one of twelve success scenes, picked at random
+#                                shattered glass · bug swarm · meltdown ·
+#                                earthquake · corrosion · deep freeze)
+#   clean                   ->  one of fifteen success scenes, picked at random
 #                               (sunny meadow · starry night · fireworks ·
 #                                aurora · sunrise at sea · balloons ·
 #                                rainbow · coral reef · confetti ·
-#                                cherry blossom · ringed planet · ripples)
+#                                cherry blossom · ringed planet · ripples ·
+#                                sky lanterns · fireflies · zen garden)
 #   compiling               ->  amber shimmer
 #
 # A fresh variant is drawn each time the state flips, and never the same one
@@ -1671,6 +1673,323 @@ scene_ok_ripple() {
     put "$top" "$COL" "$STY" "$msg"
 }
 
+# --------------------------------------------------- happy scene: lanterns ---
+
+# A festival of paper lanterns lifting off over dark rooftops: each lantern
+# climbs on its own cycle, flickering with the flame inside it, and the whole
+# field of them reflects off a low mist near the ground.
+LANTERN=(" ▄▄▄ " "█████" "█████" " ███ " "  ▀  ")
+
+scene_ok_lanterns() {
+    local f=$1 r t i x y n top msg fr fg fb cyc sway flick
+    BG_KIND=4
+    if [ "$BG_KEY" != "lant$H" ]; then
+        bgtable_reset
+        for (( r=1; r<=H-1; r++ )); do
+            t=$(( (r-1)*1000 / (H>1 ? H-1 : 1) ))
+            bgtable_row "$r" $(( 14 + 46*t/1000 )) $(( 12 + 26*t/1000 )) \
+                             $(( 34 + 30*t/1000 ))
+        done
+        BG_KEY="lant$H"
+    fi
+    bgtable_paint
+
+    # rooftops along the bottom: a stepped silhouette the lanterns rise from
+    local roof=$(( H - 3 ))
+    if (( roof > 4 )); then
+        local line="" c step
+        for (( c=1; c<=W; c++ )); do
+            step=$(( ${SIN[$(( (c * 170 / W) % 60 ))]} ))
+            (( step > 550 )) && line+="█" || line+="▄"
+        done
+        bgtable_sty 26 22 40 "$roof"
+        put "$roof" 1 "$STY" "$line"
+        for (( r=roof+1; r<=H-1; r++ )); do
+            bgtable_sty 20 17 32 "$r"
+            put "$r" 1 "$STY" "${SPACES// /█}"
+        done
+        # lit windows, a few of them blinking out
+        for (( i=0; i<14; i++ )); do
+            y=$(( roof + 1 + (i % 2) ))
+            (( y > H-1 )) && continue
+            x=$(( 2 + (i * 29 + i*i*5) % (W - 2) ))
+            if (( ${SIN[$(( (f + i*23) % 60 ))]} > 300 )); then
+                bgtable_sty 250 210 130 "$y"
+            else
+                bgtable_sty 90 74 60 "$y"
+            fi
+            put "$y" "$x" "$STY" "▪"
+        done
+    fi
+
+    # the lanterns, rising and swaying, each with a warm halo under it
+    cyc=$(( H + 10 ))
+    for i in 0 1 2 3 4 5; do
+        y=$(( H - 2 - ((f / 5 + i * cyc / 6) % cyc) ))
+        sway=$(( (${SIN[$(( (f*2 + i*13) % 60 ))]} - 500) / 240 ))
+        x=$(( 3 + (i * 43 + i*i*11) % (W - 8) + sway ))
+        flick=$(( ${SIN[$(( (f*4 + i*19) % 60 ))]} ))
+        case $(( i % 3 )) in
+            0) fr=255; fg=$(( 170 + flick / 14 )); fb=90  ;;
+            1) fr=255; fg=$(( 140 + flick / 12 )); fb=140 ;;
+            *) fr=250; fg=$(( 200 + flick / 20 )); fb=120 ;;
+        esac
+        for n in 0 1 2 3 4; do
+            r=$(( y + n ))
+            (( r < 1 || r > H-1 )) && continue
+            if (( n == 4 )); then bgtable_sty 255 240 190 "$r"
+            elif (( n == 0 )); then bgtable_sty $(( fr*8/10 )) $(( fg*8/10 )) $(( fb*8/10 )) "$r"
+            else bgtable_sty "$fr" "$fg" "$fb" "$r"
+            fi
+            put "$r" "$x" "$STY" "${LANTERN[$n]}"
+        done
+        # the glow it throws on the air just beneath it
+        r=$(( y + 5 ))
+        (( r >= 1 && r <= H-1 )) && {
+            bgtable_sty $(( fr/2 )) $(( fg/2 )) $(( fb/2 )) "$r"
+            put "$r" $(( x + 1 )) "$STY" "░░░"
+        }
+    done
+
+    # embers of ash drifting up between them
+    for (( i=0; i<20; i++ )); do
+        y=$(( H - 2 - (f / 4 + i * 7) % (H - 2 > 1 ? H - 2 : 1) ))
+        (( y < 1 || y > H-1 )) && continue
+        x=$(( 1 + (i * 37 + i*i*13) % W ))
+        bgtable_sty 240 $(( 180 + i % 40 )) 120 "$y"
+        put "$y" "$x" "$STY" "·"
+    done
+
+    top=$(( H/2 - 5 ))
+    (( top < 1 )) && top=1
+    if (( H >= 18 && W >= 60 )); then
+        draw_big "$top" BANNER_OK 255 244 220  70 40 20
+        top=$(( top + 6 ))
+    else
+        msg="✓  ALL GOOD"
+        center ${#msg}
+        bgtable_sty 255 244 220 "$top"
+        put "$top" "$COL" $'\033[1m'"$STY" "$msg"
+        top=$(( top + 2 ))
+    fi
+    msg="wishes sent up"
+    center ${#msg}
+    bgtable_sty 240 200 150 "$top"
+    put "$top" "$COL" "$STY" "$msg"
+}
+
+# -------------------------------------------------- happy scene: fireflies ---
+
+# Dusk over tall grass: fireflies wander on looping paths, blinking in slow
+# waves, over a treeline silhouette with a last band of light behind it.
+scene_ok_fireflies() {
+    local f=$1 r t i x y top msg lum hz ph n g
+
+    hz=$(( H * 58 / 100 ))
+    (( hz < 4 )) && hz=4
+    (( hz > H-4 )) && hz=$(( H-4 ))
+    BG_KIND=4
+    if [ "$BG_KEY" != "ffly$H" ]; then
+        bgtable_reset
+        for (( r=1; r<=hz; r++ )); do
+            # deep dusk overhead warming to a band of amber at the treeline
+            t=$(( (r-1)*1000 / hz ))
+            bgtable_row "$r" $(( 26 + 154*t/1000 )) $(( 26 + 84*t/1000 )) \
+                             $(( 64 + 6*t/1000 ))
+        done
+        for (( r=hz+1; r<=H-1; r++ )); do
+            t=$(( (r-hz)*1000 / (H-hz>0 ? H-hz : 1) ))
+            bgtable_row "$r" $(( 20 + 8*t/1000 )) $(( 34 + 14*t/1000 )) \
+                             $(( 24 + 8*t/1000 ))
+        done
+        BG_KEY="ffly$H"
+    fi
+    bgtable_paint
+
+    # treeline: a ragged silhouette sitting on the amber band
+    local line="" c
+    for (( c=1; c<=W; c++ )); do
+        if (( ${SIN[$(( (c * 260 / W) % 60 ))]} + ${SIN[$(( (c * 90 / W) % 60 ))]} > 1050 )); then
+            line+="▲"
+        else
+            line+="▀"
+        fi
+    done
+    bgtable_sty 22 30 26 "$hz"
+    put "$hz" 1 "$STY" "$line"
+
+    # tall grass in front, swaying in the breeze
+    tile_of "❙ ψ ❙  ❙ ψ" $(( W + 12 ))
+    for (( r=hz+1; r<=H-1; r++ )); do
+        bgtable_sty $(( 34 + (r - hz) * 4 )) $(( 66 + (r - hz) * 6 )) 40 "$r"
+        put "$r" 1 "$STY" "${TILE:$(( (f/6 + r * 3) % 10 )):W}"
+    done
+
+    # fireflies: each drifts on its own loop and blinks on its own phase, so the
+    # field pulses unevenly the way a real one does
+    for (( i=0; i<30; i++ )); do
+        ph=$(( (f * (2 + i % 3) / 4 + i * 9) % 60 ))
+        x=$(( W/2 + (${SIN[$ph]} - 500) * (W/2 - 2) / 520 + (i % 9) * 3 - 12 ))
+        y=$(( hz - 2 + (${SIN[$(( (ph * 2 + i * 7) % 60 ))]} - 500) * (hz/2) / 620
+                     + (i % 5) ))
+        (( y < 1 || y > H-1 || x < 1 || x > W )) && continue
+        g=$(( ${SIN[$(( (f*3 + i*17) % 60 ))]} ))
+        if (( g > 620 )); then
+            lum=$(( 200 + g / 20 ))
+            bgtable_sty "$lum" 255 $(( 120 + g / 12 )) "$y"
+            put "$y" "$x" "$STY" "✦"
+        elif (( g > 400 )); then
+            bgtable_sty 150 200 90 "$y"
+            put "$y" "$x" "$STY" "·"
+        fi
+    done
+
+    # the first stars, out above the dusk
+    for (( i=0; i<18; i++ )); do
+        y=$(( 1 + (i * 3) % (hz / 2 > 1 ? hz / 2 : 1) ))
+        x=$(( 1 + (i * 47 + i*i*7) % W ))
+        lum=$(( 150 + ${SIN[$(( (f + i*21) % 60 ))]} * 90 / 1000 ))
+        bgtable_sty "$lum" "$lum" 255 "$y"
+        put "$y" "$x" "$STY" "·"
+    done
+
+    top=$(( hz / 2 - 3 ))
+    (( top < 1 )) && top=1
+    if (( H >= 20 && W >= 60 )); then
+        draw_big "$top" BANNER_OK 245 255 220  30 50 30
+        top=$(( top + 6 ))
+    else
+        top=1
+        msg="✓  ALL GOOD"
+        center ${#msg}
+        bgtable_sty 245 255 220 "$top"
+        put "$top" "$COL" $'\033[1m'"$STY" "$msg"
+        top=$(( top + 1 ))
+    fi
+    msg="quiet evening, everything green"
+    center ${#msg}
+    bgtable_sty 200 225 160 "$top"
+    put "$top" "$COL" "$STY" "$msg"
+}
+
+# --------------------------------------------------------- happy scene: zen ---
+
+# A raked gravel garden: combed lines curving around three standing stones, moss
+# at their feet, and a maple leaf tumbling across. The rake pattern is fixed for
+# a window size, so it is rasterized once and replayed; only the leaf moves.
+ZEN=""; ZEN_KEY=""
+
+build_zen() {
+    local r c line save=$OUT sx1 sx2 sx3 d1 d2 d3 near
+    OUT=""
+    sx1=$(( W / 4 )); sx2=$(( W / 2 + 4 )); sx3=$(( W - W/5 ))
+    for (( r=1; r<=H-2; r++ )); do
+        line=""
+        for (( c=1; c<=W; c++ )); do
+            # the comb bends around each stone: distance to the nearest one
+            # decides which of the two rake glyphs lands here
+            d1=$(( c - sx1 )); (( d1 < 0 )) && d1=$(( -d1 ))
+            d2=$(( c - sx2 )); (( d2 < 0 )) && d2=$(( -d2 ))
+            d3=$(( c - sx3 )); (( d3 < 0 )) && d3=$(( -d3 ))
+            near=$d1
+            (( d2 < near )) && near=$d2
+            (( d3 < near )) && near=$d3
+            if (( (r * 3 + near) % 4 == 0 )); then line+="≈"
+            elif (( (r * 3 + near) % 4 == 2 )); then line+="~"
+            else line+=" "
+            fi
+        done
+        bgtable_sty 178 170 152 "$r"
+        put "$r" 1 "$STY" "$line"
+    done
+    # three stones, each with moss on the shaded side
+    local sy=$(( H / 2 )) i sx sh
+    for i in 0 1 2; do
+        case $i in
+            0) sx=$sx1; sh=3 ;;
+            1) sx=$sx2; sh=4 ;;
+            *) sx=$sx3; sh=2 ;;
+        esac
+        for (( r=sy-sh; r<=sy; r++ )); do
+            (( r < 1 || r > H-2 )) && continue
+            local half=$(( sh - (sy - r) / 2 ))
+            (( half < 1 )) && half=1
+            tile_of "█" $(( half * 2 + 2 ))
+            bgtable_sty $(( 96 + (sy - r) * 6 )) $(( 92 + (sy - r) * 6 )) \
+                        $(( 96 + (sy - r) * 6 )) "$r"
+            put "$r" $(( sx - half )) "$STY" "${TILE:0:$(( half * 2 + 1 ))}"
+        done
+        (( sy >= 1 && sy <= H-2 )) && {
+            bgtable_sty 96 138 76 "$sy"
+            put "$sy" $(( sx - sh )) "$STY" "▁▁"
+        }
+    done
+    ZEN=$OUT
+    OUT=$save
+}
+
+MAPLE=("❦" "✿" "❧" "◕")
+
+scene_ok_zen() {
+    local f=$1 r t i x y top msg lx ly
+    BG_KIND=4
+    if [ "$BG_KEY" != "zen$H" ]; then
+        bgtable_reset
+        for (( r=1; r<=H-1; r++ )); do
+            t=$(( (r-1)*1000 / (H>1 ? H-1 : 1) ))
+            bgtable_row "$r" $(( 208 - 26*t/1000 )) $(( 200 - 26*t/1000 )) \
+                             $(( 182 - 24*t/1000 ))
+        done
+        BG_KEY="zen$H"
+        ZEN_KEY=""                  # the gravel sits on this backdrop
+    fi
+    bgtable_paint
+
+    [ "$ZEN_KEY" = "$H$W" ] || { build_zen; ZEN_KEY="$H$W"; }
+    OUT+=$ZEN
+
+    # a maple leaf tumbling across the gravel on the breeze
+    lx=$(( (f * 2 / 5) % (W + 12) - 6 ))
+    ly=$(( H/3 + (${SIN[$(( (f*2) % 60 ))]} - 500) * (H/4) / 700 + H/6 ))
+    if (( ly >= 1 && ly <= H-1 && lx >= 1 )); then
+        bgtable_sty 196 96 48 "$ly"
+        put "$ly" "$lx" "$STY" "${MAPLE[$(( (f/3) % 4 ))]}"
+    fi
+
+    # a few more leaves settled in the gravel, and grains catching the light
+    for (( i=0; i<7; i++ )); do
+        y=$(( 2 + (i * 5 + H/6) % (H - 3) ))
+        x=$(( 3 + (i * 53 + i*i*7) % (W - 4) ))
+        bgtable_sty $(( 180 - i*6 )) $(( 110 + i*5 )) 60 "$y"
+        put "$y" "$x" "$STY" "❧"
+    done
+    for (( i=0; i<16; i++ )); do
+        y=$(( 1 + (i * 7 + i/3) % (H - 2) ))
+        x=$(( 1 + (i * 41 + i*i*11) % W ))
+        (( ${SIN[$(( (f*2 + i*23) % 60 ))]} > 700 )) || continue
+        bgtable_sty 245 240 226 "$y"
+        put "$y" "$x" "$STY" "˙"
+    done
+
+    top=$(( H/2 - 7 ))
+    (( top < 1 )) && top=1
+    if (( H >= 20 && W >= 60 )); then
+        draw_big "$top" BANNER_OK 84 90 78  220 214 196
+        top=$(( top + 6 ))
+    else
+        top=1
+        msg="✓  ALL GOOD"
+        center ${#msg}
+        bgtable_sty 84 90 78 "$top"
+        put "$top" "$COL" $'\033[1m'"$STY" "$msg"
+        top=$(( top + 1 ))
+    fi
+    msg="nothing out of place"
+    center ${#msg}
+    bgtable_sty 110 114 100 "$top"
+    put "$top" "$COL" "$STY" "$msg"
+}
+
 # -------------------------------------------------------------- fail scene ---
 
 # The count line, the rule under it and the failing items are the same in every
@@ -2601,6 +2920,291 @@ scene_fail_meltdown() {
     fail_details "$top"
 }
 
+# ----------------------------------------------------- fail scene: quake ------
+
+# The whole frame shaken off its axis: strata of rock split by a fault line that
+# jolts left and right, dust shaking loose from the ceiling, and a seismograph
+# trace scribbling along the top. The shake is a per-frame column offset applied
+# to the strata, so the ground genuinely displaces instead of just flickering.
+scene_fail_quake() {
+    local f=$1 r t i x y top msg shake fx off g
+
+    # a sharp jolt every ~20 frames, decaying over four frames
+    local beat=$(( f % 20 ))
+    shake=$(( beat < 4 ? (4 - beat) * (beat % 2 ? -1 : 1) : 0 ))
+    BG_KIND=4
+    if [ "$BG_KEY" != "quake$H" ]; then
+        bgtable_reset
+        for (( r=1; r<=H-1; r++ )); do
+            t=$(( (r-1)*1000 / (H>1 ? H-1 : 1) ))
+            bgtable_row "$r" $(( 44 + 44*t/1000 )) $(( 26 + 18*t/1000 )) \
+                             $(( 22 + 12*t/1000 ))
+        done
+        BG_KEY="quake$H"
+    fi
+    bgtable_paint
+
+    # strata: bands of rock, each sliced at an offset that jumps with the shake
+    tile_of "▓▓▒▓░▒▓▓▒░" $(( W + 14 ))
+    for (( r=H/2; r<=H-1; r++ )); do
+        off=$(( ((r * 3) % 10 + shake + 10) % 10 ))
+        bgtable_sty $(( 108 - (r - H/2) * 4 )) $(( 62 - (r - H/2) * 3 )) 48 "$r"
+        put "$r" $(( 1 + shake )) "$STY" "${TILE:off:W}"
+    done
+
+    # the fault: a jagged split down the strata, thrown sideways as it goes
+    fx=$(( W / 2 ))
+    for (( r=H/2; r<=H-1; r++ )); do
+        x=$(( fx + (${SIN[$(( (r * 11) % 60 ))]} - 500) * 5 / 500 + shake * 2 ))
+        bgtable_sty 14 8 8 "$r"
+        put "$r" "$x" "$STY" "▓▓"
+        bgtable_sty 200 96 60 "$r"
+        put "$r" $(( x - 1 )) "$STY" "▏"
+    done
+
+    # dust shaking loose from above, falling faster right after a jolt
+    for (( i=0; i<30; i++ )); do
+        y=$(( 2 + (f / 2 + i * 5) % (H/2 > 1 ? H/2 : 1) ))
+        x=$(( 1 + (i * 31 + i*i*7) % W + shake ))
+        g=$(( 130 + (i % 4) * 25 ))
+        bgtable_sty $(( g + 20 )) "$g" $(( g - 25 )) "$y"
+        if (( i % 3 )); then put "$y" "$x" "$STY" "˙"
+        else                 put "$y" "$x" "$STY" "░"; fi
+    done
+
+    # seismograph trace across the very top row
+    local trace="" c amp
+    for (( c=1; c<=W; c++ )); do
+        amp=$(( ${SIN[$(( (c * 7 + f * 3) % 60 ))]} + ${SIN[$(( (c * 23 + f) % 60 ))]} ))
+        if (( amp > 1300 )); then trace+="╿"
+        elif (( amp > 900 )); then trace+="┃"
+        elif (( amp > 600 )); then trace+="╽"
+        else trace+="─"
+        fi
+    done
+    bgtable_sty 255 170 90 1
+    put 1 1 "$STY" "$trace"
+
+    top=$(( H/2 - 7 ))
+    (( top < 1 )) && top=2
+    if (( H >= 18 && W >= 70 )); then
+        draw_big "$top" BANNER_FAIL 255 220 200  40 18 12
+        top=$(( top + 6 ))
+    else
+        top=2
+        msg="✗  BUILD FAILED"
+        center ${#msg}
+        sty_row 255 220 200 "$top"
+        put "$top" "$COL" $'\033[1m'"$STY" "$msg"
+        top=$(( top + 2 ))
+    fi
+    fail_details "$top"
+}
+
+# ------------------------------------------------------ fail scene: acid -----
+
+# Something corrosive eating through the panel: sickly green wash, drips running
+# down and pooling at the bottom, and holes bubbling open in the surface.
+scene_fail_acid() {
+    local f=$1 r t i x y top msg n g pool off lum
+
+    pool=$(( H - 3 ))
+    (( pool < 4 )) && pool=$(( H - 1 ))
+    BG_KIND=4
+    if [ "$BG_KEY" != "acid$H" ]; then
+        bgtable_reset
+        for (( r=1; r<=H-1; r++ )); do
+            t=$(( (r-1)*1000 / (H>1 ? H-1 : 1) ))
+            bgtable_row "$r" $(( 18 + 26*t/1000 )) $(( 34 + 56*t/1000 )) \
+                             $(( 16 + 18*t/1000 ))
+        done
+        BG_KEY="acid$H"
+    fi
+    bgtable_paint
+
+    # the panel surface: a faint grid being eaten away
+    tile_of "┼───┼───" $(( W + 10 ))
+    for (( r=2; r<=pool-1; r+=2 )); do
+        bgtable_sty 46 74 40 "$r"
+        put "$r" 1 "$STY" "${TILE:$(( (r * 4) % 8 )):W}"
+    done
+
+    # holes bubbling open, each breathing on its own phase
+    for (( i=0; i<8; i++ )); do
+        y=$(( 2 + (i * 5 + H/7) % (pool - 2 > 1 ? pool - 2 : 1) ))
+        x=$(( 4 + (i * 47 + i*i*9) % (W - 8) ))
+        n=$(( ${SIN[$(( (f*2 + i*15) % 60 ))]} / 300 ))       # 0..3 wide
+        tile_of "●" $(( n + 2 ))
+        bgtable_sty 190 255 120 "$y"
+        put "$y" $(( x - n/2 )) "$STY" "${TILE:0:$(( n + 1 ))}"
+        (( y+1 <= H-1 )) && {
+            bgtable_sty 90 150 60 $(( y + 1 ))
+            put $(( y + 1 )) "$x" "$STY" "▔"
+        }
+    done
+
+    # drips: columns of acid running down at their own speeds, heads brightest
+    for (( i=0; i<18; i++ )); do
+        x=$(( 2 + (i * 29 + i*i*5) % (W - 2) ))
+        y=$(( 1 + (f * (2 + i % 3) / 4 + i * 11) % (pool > 1 ? pool : 1) ))
+        for n in 0 1 2 3; do
+            r=$(( y - n ))
+            (( r < 1 || r > H-1 )) && continue
+            if (( n == 0 )); then bgtable_sty 210 255 140 "$r"
+            else
+                g=$(( 200 - n * 40 ))
+                bgtable_sty $(( g / 2 )) "$g" $(( g / 3 )) "$r"
+            fi
+            (( n == 0 )) && put "$r" "$x" "$STY" "◍" || put "$r" "$x" "$STY" "│"
+        done
+    done
+
+    # the pool it all collects in, its surface fizzing
+    if (( pool >= 1 )); then
+        tile_of "▀▔▀▁▀▔" $(( W + 8 ))
+        off=$(( (f / 2) % 6 ))
+        bgtable_sty 170 240 110 "$pool"
+        put "$pool" 1 "$STY" "${TILE:off:W}"
+        for (( r=pool+1; r<=H-1; r++ )); do
+            lum=$(( 110 + ${SIN[$(( (f*2 + r*17) % 60 ))]} * 60 / 1000 ))
+            bgtable_sty $(( lum / 2 )) $(( lum + 60 )) $(( lum / 3 )) "$r"
+            put "$r" 1 "$STY" "${SPACES// /█}"
+        done
+        # bubbles popping on the surface
+        for (( i=0; i<12; i++ )); do
+            x=$(( 1 + (i * 43 + i*i*7 + f / 3) % W ))
+            (( ${SIN[$(( (f*3 + i*19) % 60 ))]} > 500 )) || continue
+            bgtable_sty 230 255 190 "$pool"
+            put "$pool" "$x" "$STY" "∘"
+        done
+    fi
+
+    top=$(( pool / 2 - 3 ))
+    (( top < 1 )) && top=1
+    if (( H >= 16 && W >= 70 )); then
+        draw_big "$top" BANNER_FAIL 240 255 210  20 40 16
+        top=$(( top + 6 ))
+    else
+        top=2
+        msg="✗  BUILD FAILED"
+        center ${#msg}
+        sty_row 240 255 210 "$top"
+        put "$top" "$COL" $'\033[1m'"$STY" "$msg"
+        top=$(( top + 2 ))
+    fi
+    fail_details "$top"
+}
+
+# ------------------------------------------------- fail scene: deep freeze ----
+
+# The build frozen solid: a pale blue field creeping over with frost, icicles
+# hanging from the top edge, and slow snow settling into drifts. The frost
+# crystals grow from fixed seeds, so they are rasterized per growth stage and
+# replayed rather than recomputed per frame.
+FROST=(); FROST_KEY=""
+FROST_STAGES=10
+
+build_frost() { # stage
+    local st=$1 i n x y ax ay save=$OUT blob
+    OUT=""
+    for (( i=0; i<12; i++ )); do
+        ax=$(( 3 + (i * 41 + i*i*11) % (W - 6) ))
+        ay=$(( 2 + (i * 7 + i/3) % (H - 3 > 1 ? H - 3 : 1) ))
+        # six arms per crystal, each grown `st` steps out from the seed
+        for (( n=1; n<=st; n++ )); do
+            for y in 0 1 2 3 4 5; do
+                x=$(( ax + (${SIN[$(( (y * 10 + 15) % 60 ))]} - 500) * n * 2 / 500 ))
+                local ry=$(( ay + (${SIN[$(( (y * 10) % 60 ))]} - 500) * n / 500 ))
+                (( ry < 1 || ry > H-1 || x < 1 || x > W )) && continue
+                bgtable_sty $(( 200 + n*4 > 255 ? 255 : 200 + n*4 )) \
+                            $(( 226 + n*3 > 255 ? 255 : 226 + n*3 )) 255 "$ry"
+                put "$ry" "$x" "$STY" "❄"
+            done
+        done
+    done
+    blob=$OUT
+    OUT=$save
+    FROST[$st]=$blob
+}
+
+scene_fail_freeze() {
+    local f=$1 r t i x y top msg n g st ic lum
+
+    BG_KIND=4
+    if [ "$BG_KEY" != "frz$H" ]; then
+        bgtable_reset
+        for (( r=1; r<=H-1; r++ )); do
+            t=$(( (r-1)*1000 / (H>1 ? H-1 : 1) ))
+            bgtable_row "$r" $(( 26 + 44*t/1000 )) $(( 48 + 62*t/1000 )) \
+                             $(( 78 + 60*t/1000 ))
+        done
+        BG_KEY="frz$H"
+        FROST_KEY=""                # the crystals sit on this backdrop
+    fi
+    bgtable_paint
+
+    # frost creeping in and easing back, so the pane keeps glazing over
+    st=$(( (f / 6) % (FROST_STAGES * 2) ))
+    (( st >= FROST_STAGES )) && st=$(( FROST_STAGES * 2 - 1 - st ))
+    (( st < 1 )) && st=1
+    [ "$FROST_KEY" = "$H$W" ] || { FROST=(); FROST_KEY="$H$W"; }
+    [ -n "${FROST[$st]:-}" ] || build_frost "$st"
+    OUT+=${FROST[$st]}
+
+    # icicles hanging off the top edge, each a different length, tips glinting
+    for (( i=0; i<16; i++ )); do
+        x=$(( 2 + (i * 23 + i*i*5) % (W - 2) ))
+        ic=$(( 2 + (i * 3 + i % 5) % 6 ))
+        for (( n=1; n<=ic; n++ )); do
+            (( n > H-2 )) && break
+            bgtable_sty $(( 200 - n*6 )) $(( 232 - n*4 )) 255 "$n"
+            (( n == ic )) && put "$n" "$x" "$STY" "▼" || put "$n" "$x" "$STY" "▐"
+        done
+        (( ic <= H-2 )) && {
+            lum=$(( ${SIN[$(( (f*3 + i*17) % 60 ))]} ))
+            (( lum > 800 )) && {
+                bgtable_sty 255 255 255 "$ic"
+                put "$ic" "$x" "$STY" "✧"
+            }
+        }
+    done
+
+    # snow falling slowly, drifting on a faint breeze
+    for (( i=0; i<40; i++ )); do
+        y=$(( 1 + (f * (1 + i % 2) / 5 + i * 7 + i/4) % (H - 1) ))
+        x=$(( 1 + (i * 37 + i*i*13) % W + (${SIN[$(( (f + i*9) % 60 ))]} - 500) / 260 ))
+        g=$(( 225 + (i % 4) * 8 ))
+        bgtable_sty "$g" "$g" 255 "$y"
+        if (( i % 3 )); then put "$y" "$x" "$STY" "·"
+        else                 put "$y" "$x" "$STY" "❅"; fi
+    done
+
+    # the drift piling up along the bottom
+    local drift=$(( H - 2 ))
+    if (( drift > 3 )); then
+        tile_of "▄▅▄▆▄▅▃▄" $(( W + 10 ))
+        bgtable_sty 236 244 255 "$drift"
+        put "$drift" 1 "$STY" "${TILE:$(( (f / 12) % 8 )):W}"
+        bgtable_sty 246 250 255 $(( drift + 1 ))
+        put $(( drift + 1 )) 1 "$STY" "${SPACES// /█}"
+    fi
+
+    top=$(( H/2 - 7 ))
+    (( top < 1 )) && top=1
+    if (( H >= 16 && W >= 70 )); then
+        draw_big "$top" BANNER_FAIL 255 250 250  20 46 80
+        top=$(( top + 6 ))
+    else
+        top=2
+        msg="✗  BUILD FAILED"
+        center ${#msg}
+        sty_row 255 250 250 "$top"
+        put "$top" "$COL" $'\033[1m'"$STY" "$msg"
+        top=$(( top + 2 ))
+    fi
+    fail_details "$top"
+}
+
 # ------------------------------------------------------------ scene picker ---
 
 # Which variant is on screen is chosen when the state flips, not per frame —
@@ -2609,11 +3213,13 @@ scene_fail_meltdown() {
 OK_VARIANTS=(scene_ok_meadow scene_ok_night scene_ok_fireworks
              scene_ok_aurora scene_ok_sunrise scene_ok_balloons
              scene_ok_rainbow scene_ok_reef scene_ok_confetti
-             scene_ok_blossom scene_ok_orbit scene_ok_ripple)
+             scene_ok_blossom scene_ok_orbit scene_ok_ripple
+             scene_ok_lanterns scene_ok_fireflies scene_ok_zen)
 FAIL_VARIANTS=(scene_fail_pulse scene_fail_storm scene_fail_glitch
                scene_fail_lava scene_fail_matrix scene_fail_alarm
                scene_fail_wall scene_fail_vortex scene_fail_embers
-               scene_fail_shatter scene_fail_swarm scene_fail_meltdown)
+               scene_fail_shatter scene_fail_swarm scene_fail_meltdown
+               scene_fail_quake scene_fail_acid scene_fail_freeze)
 OK_PICK=0
 FAIL_PICK=0
 
