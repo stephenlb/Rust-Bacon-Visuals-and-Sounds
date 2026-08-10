@@ -27,7 +27,7 @@
 #                                waterfall · hearth · steam train ·
 #                                lighthouse · kites · carousel ·
 #                                snowy village · desert meteors ·
-#                                rainy window)
+#                                rainy window with a storm going by)
 #   compiling               ->  amber shimmer
 #
 # A fresh variant is drawn each time the state flips, and never the same one
@@ -232,6 +232,7 @@ sty() { # fg r g b, bg r g b -> STY
 # \033[49m instead would punch default-background holes in the scene.
 #   1 fail pulse (formula)  2 building pulse (formula)  3 sky/hill
 #   4 per-row table (BGROW_*, filled by the scene)  0 flat
+#   5 window pane (PANE_*, filled by the window scene's frame rasterizer)
 BG_KIND=0
 BG_LVL=0
 bg_at() { # row -> BGR BGG BGB
@@ -251,6 +252,11 @@ bg_at() { # row -> BGR BGG BGB
                BGR=${HILL_R[$1]:-0}; BGG=${HILL_G[$1]:-0}; BGB=${HILL_B[$1]:-0}
            fi ;;
         4) BGR=${BGROW_R[$1]:-12}; BGG=${BGROW_G[$1]:-12}; BGB=${BGROW_B[$1]:-16} ;;
+        5) if [ -n "${PANE_R[$1]:-}" ]; then
+               BGR=${PANE_R[$1]}; BGG=${PANE_G[$1]}; BGB=${PANE_B[$1]}
+           else
+               BGR=${BGROW_R[$1]:-12}; BGG=${BGROW_G[$1]:-12}; BGB=${BGROW_B[$1]:-16}
+           fi ;;
         *) BGR=12; BGG=12; BGB=16 ;;
     esac
 }
@@ -3582,23 +3588,97 @@ scene_ok_desert() {
 
 # ----------------------------------------------------- happy scene: window ----
 #
-# Indoors, looking out: rain running down the glass of a lit room's window, the
-# town blurred into soft lights beyond it, a mug steaming on the sill and a
-# plant leaning into the frame. The frame, the sill and everything standing on
-# it are fixed for a window size and rasterized once; the rain, the lights and
-# the steam are all that move.
+# Indoors, looking out: rain running down the glass of a lit room's window, a
+# stepped town skyline blurred into soft lights beyond it, distant lightning
+# silhouetting the roofs, a mug steaming on the sill and a plant leaning into
+# the frame. The frame, the sill, the skyline and everything standing on the
+# sill are fixed for a window size and rasterized once; the rain, the lights,
+# the flashes and the steam are all that move.
 WINDOW=""; WINDOW_KEY=""
 
-build_window() { # py1 py2 px1 px2 sill
-    local py1=$1 py2=$2 px1=$3 px2=$4 sill=$5 r wide save=$OUT lum
+# Anything drawn over the glass with a glyph that is not a solid block shows its
+# background through, and bgtable_sty would hand it the room's warm brown. These
+# hold the pane's own colour per row, filled while the frame is rasterized, so
+# rain, town lights and reflections sit on night instead of on the wall.
+PANE_R=(); PANE_G=(); PANE_B=()
+
+# A lightning flash brightens the pane for a frame or two. Rather than rewrite
+# the cached table (and have to put it back afterwards), the lift is a pair of
+# globals the lookup adds in, for rows above the roofline only.
+PANE_LIFT=0; PANE_LIFT_TO=0
+
+pane_sty() { # fg r g b, row
+    local br=${PANE_R[$4]:-20} bg=${PANE_G[$4]:-26} bb=${PANE_B[$4]:-46}
+    if (( PANE_LIFT && $4 < PANE_LIFT_TO )); then
+        br=$(( br + PANE_LIFT )); bg=$(( bg + PANE_LIFT )); bb=$(( bb + PANE_LIFT ))
+    fi
+    sty "$1" "$2" "$3" "$br" "$bg" "$bb"
+}
+
+build_window() { # py1 py2 px1 px2 sill skyline_row
+    local py1=$1 py2=$2 px1=$3 px2=$4 sill=$5 sk=$6
+    local r c wide save=$OUT lum g bt=() dep
     wide=$(( px2 - px1 + 1 ))
     OUT=""
-    # the night outside, seen through the glass
+    # the night outside: overcast slate up top, warming a touch at the roofline
+    # from the town's own light, so the silhouette has something to stand against
+    PANE_R=(); PANE_G=(); PANE_B=()
     tile_of "█" $(( wide + 2 ))
     for (( r=py1; r<=py2; r++ )); do
-        bgtable_sty $(( 16 + (r - py1) )) $(( 22 + (r - py1) * 2 )) \
-                    $(( 42 + (r - py1) * 2 )) "$r"
+        g=$(( (r - py1) * 1000 / (sk - py1 > 0 ? sk - py1 : 1) ))
+        (( g > 1000 )) && g=1000
+        bgtable_sty $(( 34 + 34*g/1000 )) $(( 42 + 30*g/1000 )) \
+                    $(( 62 + 20*g/1000 )) "$r"
         put "$r" "$px1" "$STY" "${TILE:0:wide}"
+        if (( r < sk )); then
+            PANE_R[$r]=$(( 34 + 34*g/1000 ))
+            PANE_G[$r]=$(( 42 + 30*g/1000 ))
+            PANE_B[$r]=$(( 62 + 20*g/1000 ))
+        else
+            # below the roofline the town fills most of the glass, so the colour
+            # a raindrop sits on is the buildings, not the sky
+            PANE_R[$r]=20; PANE_G[$r]=23; PANE_B[$r]=34
+        fi
+    done
+    # the town: blocks five columns wide, each with its own roof height, a gap
+    # column between them so the night shows through. Column-at-a-time because
+    # the run of sky beside a roof must stay the pane's colour, not the room's.
+    for (( c=0; c<wide; c++ )); do
+        g=$(( c / 5 ))
+        (( c % 5 == 4 )) && continue                  # the alley between blocks
+        bt[$c]=$(( sk + (py2 - sk) * (1000 - ${SIN[$(( (g * 13) % 60 ))]}) / 2400 ))
+    done
+    for (( c=0; c<wide; c++ )); do
+        [ -n "${bt[$c]:-}" ] || continue
+        g=$(( (c / 5) % 3 ))
+        dep=$(( 14 + g * 7 ))
+        for (( r=${bt[$c]}; r<=py2; r++ )); do
+            (( r < py1 || r > H-1 )) && continue
+            bgtable_sty "$dep" $(( dep + 3 )) $(( dep + 14 )) "$r"
+            put "$r" $(( px1 + c )) "$STY" "█"
+        done
+        # a lit window here and there, dim enough for the flicker pass to own
+        if (( c % 5 == 1 && (c * 7 + sk) % 3 == 0 )); then
+            r=$(( ${bt[$c]} + 1 + (c % 3) ))
+            (( r >= py1 && r <= py2 )) && {
+                pane_sty 132 106 62 "$r"
+                put "$r" $(( px1 + c )) "$STY" "▪"
+            }
+        fi
+    done
+    # the lamp behind us, reflected in the glass as a soft slanted smear
+    for (( r=py1; r<=py2; r++ )); do
+        lum=$(( 54 - (r - py1) * 5 )); (( lum < 14 )) && lum=14
+        pane_sty $(( 96 + lum )) $(( 84 + lum )) $(( 62 + lum )) "$r"
+        put "$r" $(( px1 + 2 + (r - py1) / 2 )) "$STY" "░"
+    done
+    # condensation hazing the corners of the pane, where the glass is coldest
+    for (( r=py1; r<=py1+2 && r<=py2; r++ )); do
+        pane_sty $(( 150 - (r - py1) * 20 )) $(( 168 - (r - py1) * 20 )) \
+                 $(( 190 - (r - py1) * 18 )) "$r"
+        tile_of "░▒░ " $(( wide + 4 ))
+        put "$r" "$px1" "$STY" "${TILE:0:$(( 4 - (r - py1) ))}"
+        put "$r" $(( px2 - 3 + (r - py1) )) "$STY" "${TILE:0:$(( 4 - (r - py1) ))}"
     done
     # the frame, and the two mullions crossing the pane
     tile_of "█" $(( wide + 6 ))
@@ -3635,16 +3715,28 @@ build_window() { # py1 py2 px1 px2 sill
         bgtable_sty $(( lum - 18 )) $(( lum / 2 )) $(( lum / 3 )) "$r"
         put "$r" 1 "$STY" "${TILE:$(( (r * 4) % 11 )):W}"
     done
-    # the mug and the plant, stood on the sill
+    # the mug, two rows tall with a handle, and the plant beside the far jamb
     r=$(( sill - 1 ))
     if (( r >= 1 && r <= H-1 )); then
-        bgtable_sty 236 230 220 "$r"
-        put "$r" $(( px1 + 2 )) "$STY" "▐█▌"
+        bgtable_sty 238 232 222 "$r"
+        put "$r" $(( px1 + 2 )) "$STY" "▙▄▟"
+        (( r-1 >= 1 )) && {
+            bgtable_sty 246 242 236 $(( r - 1 ))
+            put $(( r - 1 )) $(( px1 + 2 )) "$STY" "▛▀▜"
+            bgtable_sty 214 206 196 $(( r - 1 ))
+            put $(( r - 1 )) $(( px1 + 5 )) "$STY" "╮"
+            bgtable_sty 214 206 196 "$r"
+            put "$r" $(( px1 + 5 )) "$STY" "╯"
+        }
         bgtable_sty 118 78 58 "$r"
-        put "$r" $(( px2 - 4 )) "$STY" "▟█▙"
+        put "$r" $(( px2 - 5 )) "$STY" "▟█▙"
         (( r-1 >= 1 )) && {
             bgtable_sty 92 158 88 $(( r - 1 ))
-            put $(( r - 1 )) $(( px2 - 5 )) "$STY" "ψ❦ψ"
+            put $(( r - 1 )) $(( px2 - 6 )) "$STY" "ψ❦ψ"
+        }
+        (( r-2 >= 1 )) && {
+            bgtable_sty 108 174 100 $(( r - 2 ))
+            put $(( r - 2 )) $(( px2 - 5 )) "$STY" "❦"
         }
     fi
     WINDOW=$OUT
@@ -3652,7 +3744,8 @@ build_window() { # py1 py2 px1 px2 sill
 }
 
 scene_ok_window() {
-    local f=$1 r t i x y top msg py1 py2 px1 px2 sill wide lum g n
+    local f=$1 r t i x y top msg py1 py2 px1 px2 sill sk wide lum g n
+    local cyc p flash slant
     py1=$(( 2 + H/12 )); (( py1 < 2 )) && py1=2
     sill=$(( H - 4 )); (( sill > H-2 )) && sill=$(( H - 2 ))
     (( sill < py1 + 3 )) && sill=$(( py1 + 3 ))
@@ -3664,6 +3757,9 @@ scene_ok_window() {
     (( px2 < px1 + 6 )) && px2=$(( px1 + 6 ))
     (( px2 > W )) && px2=$W
     wide=$(( px2 - px1 + 1 ))
+    sk=$(( py2 - (py2 - py1) / 3 ))
+    (( sk < py1 + 1 )) && sk=$(( py1 + 1 ))
+    (( sk > py2 )) && sk=$py2
     BG_KIND=4
     if [ "$BG_KEY" != "wnd$H" ]; then
         bgtable_reset
@@ -3688,56 +3784,112 @@ scene_ok_window() {
     done
 
     [ "$WINDOW_KEY" = "$H$W" ] ||
-        { build_window "$py1" "$py2" "$px1" "$px2" "$sill"; WINDOW_KEY="$H$W"; }
+        { build_window "$py1" "$py2" "$px1" "$px2" "$sill" "$sk"
+          WINDOW_KEY="$H$W"; }
     OUT+=$WINDOW
+    # from here on everything lands on the glass, so overlays resolve their
+    # backdrop from the pane table (rows off the pane fall back to the room)
+    BG_KIND=5
 
-    # the town out there, blurred into soft lights by the wet glass
-    for (( i=0; i<18; i++ )); do
-        y=$(( py2 - (i % 3) ))
+    # a storm going by somewhere out there: two flashes, close together, every
+    # ~18s. Only the sky above the roofline lights up, so the town stays a
+    # silhouette the way it does through real weather. The flash paints the sky
+    # itself and lifts the pane colour, so the rain over it lights up too.
+    flash=0
+    p=$(( (f + 41) % 250 ))
+    (( p < 2 )) && flash=$(( 60 - p * 22 ))
+    (( p > 3 && p < 6 )) && flash=26
+    PANE_LIFT=$flash; PANE_LIFT_TO=$sk
+    if (( flash )); then
+        tile_of "█" $(( wide + 2 ))
+        for (( r=py1; r<sk; r++ )); do
+            lum=$(( flash * 2 - (sk - r) * 3 )); (( lum < 0 )) && lum=0
+            pane_sty $(( ${PANE_R[$r]:-20} + lum )) $(( ${PANE_G[$r]:-26} + lum )) \
+                     $(( ${PANE_B[$r]:-46} + lum + 10 )) "$r"
+            put "$r" "$px1" "$STY" "${TILE:0:wide}"
+            # the fill covers the whole pane, mullion included: put it back
+            bgtable_sty 112 78 54 "$r"
+            put "$r" $(( (px1 + px2) / 2 )) "$STY" "▐▌"
+        done
+        r=$(( (py1 + py2) / 2 ))
+        if (( r >= py1 && r < sk )); then
+            tile_of "▬" $(( wide + 2 ))
+            bgtable_sty 112 78 54 "$r"
+            put "$r" "$px1" "$STY" "${TILE:0:wide}"
+        fi
+    fi
+
+    # the town's windows, blurred into soft lights by the wet glass
+    for (( i=0; i<20; i++ )); do
+        y=$(( sk + (i * 3 + i/2) % (py2 - sk + 1) ))
         (( y < py1 || y > py2 )) && continue
         x=$(( px1 + (i * 7 + i*i*3) % wide ))
         (( ${SIN[$(( (f + i*21) % 60 ))]} > 260 )) || continue
-        if (( i % 3 )); then bgtable_sty 226 $(( 180 + i % 40 )) 110 "$y"
-        else                 bgtable_sty 130 170 220 "$y"
+        if (( i % 3 )); then pane_sty 226 $(( 180 + i % 40 )) 110 "$y"
+        else                 pane_sty 130 170 220 "$y"
         fi
         put "$y" "$x" "$STY" "░"
     done
 
-    # rain on the pane: beads that run down, each on its own speed, plus the
-    # streaks they leave behind them
-    for (( i=0; i<40; i++ )); do
-        y=$(( py1 + (f * (2 + i % 3) / 4 + i * 5 + i/3) % (py2 - py1 + 1) ))
+    # rain falling out there, leaning with the gusts. It sits behind the beads
+    # on the glass, and it is dim, so the pane reads as two layers deep.
+    slant=$(( ${SIN[$(( (f / 3) % 60 ))]} > 500 ? 1 : 0 ))
+    for (( i=0; i<26; i++ )); do
+        y=$(( py1 + (f * 3 + i * 7 + i/2) % (py2 - py1 + 1) ))
+        x=$(( px1 + (i * 13 + i*i*5 + f / 2) % wide ))
+        pane_sty $(( 82 + i % 20 )) $(( 104 + i % 20 )) 148 "$y"
+        (( slant )) && put "$y" "$x" "$STY" "╱" || put "$y" "$x" "$STY" "╲"
+    done
+
+    # rain on the pane: beads gathering, then running. A bead's progress is
+    # squared over its cycle, so it creeps at the top of the glass and picks up
+    # speed on the way down, dragging a longer tail as it goes.
+    cyc=$(( py2 - py1 + 7 ))
+    for (( i=0; i<30; i++ )); do
+        p=$(( (f * (2 + i % 3) / 3 + i * 11 + i*i) % cyc ))
+        y=$(( py1 + p * p / cyc ))
+        (( y > py2 )) && continue
         x=$(( px1 + (i * 11 + i*i*7) % wide ))
         lum=$(( 170 + ${SIN[$(( (f + i*13) % 60 ))]} * 60 / 1000 ))
-        bgtable_sty "$lum" $(( lum + 30 > 255 ? 255 : lum + 30 )) 255 "$y"
+        pane_sty "$lum" $(( lum + 30 > 255 ? 255 : lum + 30 )) 255 "$y"
         if (( i % 4 )); then put "$y" "$x" "$STY" "·"
         else                 put "$y" "$x" "$STY" "╷"; fi
-        (( y-1 >= py1 && i % 3 == 0 )) && {
-            bgtable_sty $(( lum - 60 )) $(( lum - 30 )) 220 $(( y - 1 ))
-            put $(( y - 1 )) "$x" "$STY" "╵"
-        }
+        # the streak it left, as long as it is travelling fast
+        for (( n=1; n<=p*3/cyc; n++ )); do
+            r=$(( y - n ))
+            (( r < py1 )) && break
+            pane_sty $(( lum - 40 - n*24 )) $(( lum - 20 - n*20 )) \
+                     $(( 240 - n*20 )) "$r"
+            put "$r" "$x" "$STY" "╵"
+        done
     done
-    # a drop or two chasing all the way down the outside of the glass
+    # two fat drops chasing all the way down, wobbling around the ones ahead
     for i in 0 1; do
         y=$(( py1 + (f / 2 + i * 9) % (py2 - py1 + 1) ))
         x=$(( px1 + 3 + (i * 13) % (wide > 4 ? wide - 4 : 1) ))
-        for (( n=0; n<4; n++ )); do
+        for (( n=0; n<5; n++ )); do
             r=$(( y - n ))
             (( r < py1 || r > py2 )) && continue
-            bgtable_sty $(( 220 - n * 30 )) $(( 236 - n * 26 )) 255 "$r"
+            pane_sty $(( 226 - n * 28 )) $(( 240 - n * 24 )) 255 "$r"
             if (( n == 0 )); then put "$r" "$x" "$STY" "●"
-            else                  put "$r" "$x" "$STY" "│"; fi
+            else put "$r" $(( x + (${SIN[$(( (i*20 + n*9) % 60 ))]} - 500) / 460 )) \
+                     "$STY" "│"
+            fi
         done
     done
 
-    # steam off the mug, curling as it goes up
-    for (( n=0; n<4; n++ )); do
-        r=$(( sill - 2 - n ))
+    # steam off the mug, curling as it goes up and thinning out
+    for (( n=0; n<5; n++ )); do
+        r=$(( sill - 3 - n ))
         (( r < 1 || r > H-1 )) && break
-        g=$(( 210 - n * 26 ))
-        bgtable_sty "$g" "$g" $(( g - 20 )) "$r"
-        put "$r" $(( px1 + 3 + (${SIN[$(( (f*2 + n*11) % 60 ))]} - 500) / 400 )) \
-            "$STY" "·"
+        g=$(( 214 - n * 24 ))
+        bgtable_sty "$g" "$g" $(( g - 24 )) "$r"
+        x=$(( px1 + 3 + (${SIN[$(( (f*2 + n*13) % 60 ))]} - 500) / 330 ))
+        case $(( (f/3 + n) % 3 )) in
+            0) put "$r" "$x" "$STY" "˙" ;;
+            1) put "$r" "$x" "$STY" "·" ;;
+            *) put "$r" "$x" "$STY" "‧" ;;
+        esac
     done
 
     # the banner reads as light thrown on the glass, so it sits over the pane
