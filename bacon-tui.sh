@@ -3289,7 +3289,7 @@ build_carousel_fair() { # cy cx
 
 scene_ok_carousel() {
     local f=$1 r t i x y top msg cx cy apex unit half n g c ph depth bob idx
-    local lum sway drum
+    local lum sway drum ride orbit
 
     cy=$(( H * 68 / 100 ))
     (( cy < 10 )) && cy=10
@@ -3301,6 +3301,10 @@ scene_ok_carousel() {
     (( apex < 1 )) && apex=1
     drum=$(( apex + 6 ))
     cx=$(( W / 2 ))
+    # the ride's radius comes from the canopy, so the platform beneath it and the
+    # orbit the horses swing along stay inside the roof at any window size
+    ride=$(( 5 * unit + 2 ))
+    orbit=$(( ride - 7 )); (( orbit < 4 )) && orbit=4
     BG_KIND=4
     if [ "$BG_KEY" != "car$H" ]; then
         bgtable_reset
@@ -3332,7 +3336,9 @@ scene_ok_carousel() {
         ph=$(( (f + i * 8) % 60 ))
         depth=${SIN[$(( (ph + 15) % 60 ))]}
         (( depth > 500 )) && continue
-        x=$(( cx + (${SIN[$ph]} - 500) * (W/6) / 500 ))
+        # x is the sprite's left edge, so the 7-wide far horse is pulled back by
+        # half its width to sit centred on the orbit
+        x=$(( cx + (${SIN[$ph]} - 500) * orbit / 500 - 3 ))
         bob=$(( (${SIN[$(( (f*3 + i*15) % 60 ))]} - 500) / 400 ))
         y=$(( cy - 7 + bob ))
         for (( r=y+4; r<=cy-1; r++ )); do
@@ -3402,7 +3408,7 @@ scene_ok_carousel() {
 
     # the platform it all stands on
     for (( r=cy; r<=cy+1 && r<=H-1; r++ )); do
-        half=$(( W/6 - (r - cy) * 2 ))
+        half=$(( ride - (r - cy) * 2 ))
         (( half < 3 )) && half=3
         tile_of "█" $(( half * 2 + 2 ))
         bgtable_sty $(( 130 - (r - cy) * 20 )) $(( 96 - (r - cy) * 16 )) 70 "$r"
@@ -3414,7 +3420,8 @@ scene_ok_carousel() {
         ph=$(( (f + i * 8) % 60 ))
         depth=${SIN[$(( (ph + 15) % 60 ))]}
         (( depth > 500 )) || continue
-        x=$(( cx + (${SIN[$ph]} - 500) * (W/6) / 500 ))
+        # likewise for the 11-wide near horse
+        x=$(( cx + (${SIN[$ph]} - 500) * orbit / 500 - 5 ))
         bob=$(( (${SIN[$(( (f*3 + i*15) % 60 ))]} - 500) / 340 ))
         y=$(( cy - 4 + bob ))
         # the brass pole it rides on, running the full height of the ride
@@ -3454,7 +3461,7 @@ scene_ok_carousel() {
         lum=$(( 96 - (r - cy) * 8 )); (( lum < 34 )) && lum=34
         bgtable_sty "$lum" $(( lum * 4 / 5 )) $(( lum / 2 )) "$r"
         put "$r" 1 "$STY" "${TILE:$(( (f/5 + r * 3) % 8 )):W}"
-        half=$(( W/6 - (r - cy) * 4 ))
+        half=$(( ride - (r - cy) * 4 ))
         if (( half > 2 )); then
             tile_of "▒░▒ ░" $(( half * 2 + 6 ))
             bgtable_sty $(( lum + 60 )) $(( lum + 34 )) $(( lum / 2 + 16 )) "$r"
