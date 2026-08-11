@@ -3148,20 +3148,111 @@ scene_ok_kites() {
 
 # -------------------------------------------------- happy scene: carousel ----
 
-# A carousel turning at a night fair: a striped canopy with bulbs chasing round
-# the rim, horses swinging past on their poles — the ones on the near side drawn
-# large and low, the far side small and high — and warm light on the ground.
-CAROUSEL_H=("▟▀▙" "▐█▌")
+# A carousel turning at a night fair: a scalloped canopy with the stripes
+# walking round it, bulbs chasing the valance, horses swinging past on brass
+# poles — the near side low and lit, the far side small, high and behind the
+# mirrored drum — and warm light pooling on the ground with the crowd in it.
+#
+# The canopy's shape depends only on the window and the stripe phase, so all
+# CAR_PHASES phases are rasterized on demand and replayed; the tents pitched
+# beside the ride are fixed for a window size and cached the same way. Only the
+# horses, the bulbs, the mirrors and the crowd are redrawn per frame.
+# facing right: ears and head, then the neck, the body with its tail, the legs
+CAR_NEAR=("        ▄▟▖" "    ▗▄▄███▛" "▚▄█████████" "  ▐▌   ▐▌  ")
+CAR_FAR=("     ▄▟" "  ▄████" "▚██████" " ▌   ▌ ")
+CAR_STRIPE=3                    # columns per stripe
+CAR_PHASES=6                    # 2 * CAR_STRIPE, so the stripes loop seamlessly
+CAR_CANOPY=(); CAR_CANOPY_KEY=""
+CAR_FAIR=""; CAR_FAIR_KEY=""
+
+# one canopy phase: four sloping rows of stripes, then the scalloped valance
+build_carousel_canopy() { # idx apex cx unit
+    local idx=$1 apex=$2 cx=$3 unit=$4
+    local n r half c lo hi len start k stripe dim fr fg fb lobe save=$OUT
+    local sh=$(( CAR_PHASES - idx ))    # so a rising phase walks the stripes right
+    OUT=""
+    for n in 0 1 2 3 4; do
+        r=$(( apex + n ))
+        (( r < 1 || r > H-1 )) && continue
+        half=$(( (n + 1) * unit + 2 ))
+        (( n == 4 )) && lobe="▙█▟" || lobe="███"
+        # the stripe grid is offset by the phase, so the run boundaries walk
+        # sideways and the whole canopy reads as turning
+        start=$(( -half - (half + sh) % CAR_STRIPE ))
+        for (( c=start; c<=half; c+=CAR_STRIPE )); do
+            lo=$(( c < -half ? -half : c ))
+            hi=$(( c + CAR_STRIPE - 1 )); (( hi > half )) && hi=$half
+            len=$(( hi - lo + 1 ))
+            (( len < 1 )) && continue
+            k=$(( c + half + sh + 300 ))     # kept positive: bash truncates to 0
+            stripe=$(( (k / CAR_STRIPE) % 2 ))
+            dim=$(( 1000 - (c < 0 ? -c : c) * 420 / half ))
+            (( dim < 300 )) && dim=300
+            if (( stripe )); then fr=232; fg=72; fb=78
+            else                  fr=248; fg=242; fb=232
+            fi
+            bgtable_sty $(( fr*dim/1000 )) $(( fg*dim/1000 )) $(( fb*dim/1000 )) "$r"
+            put "$r" $(( cx + lo )) "$STY" "${lobe:$(( lo - c )):len}"
+        done
+    done
+    CAR_CANOPY[$idx]=$OUT
+    OUT=$save
+}
+
+# the tents pitched either side of the ride, with bunting strung between them
+build_carousel_fair() { # cy cx
+    local cy=$1 cx=$2 i n r c x y w half line save=$OUT
+    OUT=""
+    for i in 0 1; do
+        x=$(( i == 0 ? W/9 : W - W/9 ))
+        for n in 0 1 2 3 4; do
+            r=$(( cy - 4 + n ))
+            (( r < 1 || r > H-1 )) && continue
+            half=$(( n + 1 ))
+            line=""
+            for (( c=-half; c<=half; c++ )); do
+                (( (c + 60 + i) % 3 )) && line+="█" || line+="▓"
+            done
+            bgtable_sty $(( 122 - n*8 )) $(( 78 - n*6 )) $(( 100 - n*7 )) "$r"
+            put "$r" $(( x - half )) "$STY" "$line"
+        done
+        r=$(( cy - 5 ))
+        (( r >= 1 )) && {
+            bgtable_sty 190 150 90 "$r"
+            put "$r" "$x" "$STY" "╽"
+        }
+    done
+    # bunting sagging between the two tent poles, behind the ride
+    r=$(( cy - 5 ))
+    if (( r >= 1 )); then
+        for (( c=W/9; c<=W-W/9; c+=4 )); do
+            y=$(( r + (c / 4) % 2 ))
+            (( y < 1 || y > H-1 )) && continue
+            case $(( (c / 4) % 3 )) in
+                0) bgtable_sty 208 88 84 "$y" ;;
+                1) bgtable_sty 226 186 96 "$y" ;;
+                *) bgtable_sty 110 168 186 "$y" ;;
+            esac
+            put "$y" "$c" "$STY" "▾"
+        done
+    fi
+    CAR_FAIR=$OUT
+    OUT=$save
+}
 
 scene_ok_carousel() {
-    local f=$1 r t i x y top msg cx cy apex half n g line c ph depth bob lum
+    local f=$1 r t i x y top msg cx cy apex unit half n g c ph depth bob idx
+    local lum sway drum
 
-    cy=$(( H * 66 / 100 ))
+    cy=$(( H * 68 / 100 ))
     (( cy < 10 )) && cy=10
-    (( cy > H-3 )) && cy=$(( H-3 ))
-    # the canopy has to clear the far-side horses, which ride at cy-5
-    apex=$(( cy - 10 ))
+    (( cy > H-4 )) && cy=$(( H-4 ))
+    unit=$(( W / 14 )); (( unit < 2 )) && unit=2
+    # the canopy and its valance need six rows over the far-side horses, which
+    # ride at cy-6
+    apex=$(( cy - 12 ))
     (( apex < 1 )) && apex=1
+    drum=$(( apex + 6 ))
     cx=$(( W / 2 ))
     BG_KIND=4
     if [ "$BG_KEY" != "car$H" ]; then
@@ -3172,10 +3263,14 @@ scene_ok_carousel() {
                              $(( 40 + 34*t/1000 ))
         done
         BG_KEY="car$H"
+        CAR_CANOPY_KEY=""; CAR_FAIR_KEY=""   # both sit on this backdrop
     fi
     bgtable_paint
 
     # the rest of the fair, lit up behind it
+    [ "$CAR_FAIR_KEY" = "$H$W" ] ||
+        { build_carousel_fair "$cy" "$cx"; CAR_FAIR_KEY="$H$W"; }
+    OUT+=$CAR_FAIR
     for (( i=0; i<22; i++ )); do
         y=$(( 2 + (i * 3) % (apex > 2 ? apex : 2) ))
         x=$(( 1 + (i * 41 + i*i*7) % W ))
@@ -3185,39 +3280,80 @@ scene_ok_carousel() {
         fi
     done
 
-    # the canopy: four rows of stripes that shift sideways as the ride turns
-    for n in 0 1 2 3; do
-        r=$(( apex + n ))
-        (( r < 1 || r > H-1 )) && continue
-        half=$(( (n + 1) * (W / 14) + 2 ))
-        line=""
-        for (( c=0; c<half*2+1; c++ )); do line+="█"; done
-        if (( (n + f/3) % 2 )); then bgtable_sty 226 66 72 "$r"
-        else                         bgtable_sty 246 240 232 "$r"
-        fi
-        put "$r" $(( cx - half )) "$STY" "$line"
+    # the far side of the ride, behind the drum: small, dim, riding high
+    for (( i=0; i<8; i++ )); do
+        ph=$(( (f + i * 8) % 60 ))
+        depth=${SIN[$(( (ph + 15) % 60 ))]}
+        (( depth > 500 )) && continue
+        x=$(( cx + (${SIN[$ph]} - 500) * (W/6) / 500 ))
+        bob=$(( (${SIN[$(( (f*3 + i*15) % 60 ))]} - 500) / 400 ))
+        y=$(( cy - 7 + bob ))
+        for (( r=y+4; r<=cy-1; r++ )); do
+            (( r < 1 || r > H-1 )) && continue
+            bgtable_sty 120 104 62 "$r"
+            put "$r" $(( x + 3 )) "$STY" "│"
+        done
+        for n in 0 1 2 3; do
+            r=$(( y + n ))
+            (( r < 1 || r > H-1 )) && continue
+            case $n in
+                0) bgtable_sty 152 132 120 "$r" ;;
+                1) bgtable_sty 142 122 112 "$r" ;;
+                2) bgtable_sty 130 112 104 "$r" ;;
+                *) bgtable_sty 110 94 88 "$r" ;;
+            esac
+            put "$r" "$x" "$STY" "${CAR_FAR[$n]}"
+        done
     done
-    # bulbs chasing each other round the rim of the canopy
-    r=$(( apex + 4 ))
-    half=$(( 4 * (W / 14) + 2 ))
+
+    # the drum in the middle, with mirror panels catching the bulbs
+    for (( r=drum; r<=cy-1; r++ )); do
+        (( r < 1 )) && continue
+        bgtable_sty 206 180 132 "$r"
+        put "$r" $(( cx - 2 )) "$STY" "▐██▌"
+        # mirror panels: a highlight sliding down the drum as it turns
+        if (( (r + f/2) % 4 == 0 )); then
+            lum=$(( 218 + ${SIN[$(( (f*3 + r*11) % 60 ))]} * 37 / 1000 ))
+            bgtable_sty "$lum" $(( lum - 18 )) $(( lum - 64 )) "$r"
+            put "$r" $(( cx - 1 )) "$STY" "▀▀"
+        fi
+    done
+
+    # the canopy, over the top of the drum and the far-side horses
+    idx=$(( (f / 2) % CAR_PHASES ))
+    [ "$CAR_CANOPY_KEY" = "$H$W$apex" ] ||
+        { CAR_CANOPY=(); CAR_CANOPY_KEY="$H$W$apex"; }
+    [ -n "${CAR_CANOPY[$idx]:-}" ] || build_carousel_canopy "$idx" "$apex" "$cx" "$unit"
+    OUT+=${CAR_CANOPY[$idx]}
+    # the finial, and a pennant snapping in the breeze above it
+    for n in 1 2; do
+        r=$(( apex - n ))
+        (( r < 1 )) && break
+        bgtable_sty 226 196 120 "$r"
+        put "$r" "$cx" "$STY" "│"
+    done
+    r=$(( apex - 2 ))
+    if (( r >= 1 )); then
+        bgtable_sty 232 84 88 "$r"
+        (( (f/4) % 2 )) && put "$r" $(( cx + 1 )) "$STY" "◤" \
+                        || put "$r" $(( cx + 1 )) "$STY" "◥"
+    fi
+    # bulbs chasing each other round under the valance
+    r=$(( apex + 5 ))
+    half=$(( 5 * unit + 2 ))
     if (( r >= 1 && r <= H-1 )); then
         for (( c=-half; c<=half; c+=3 )); do
             if (( ((c + half) / 3 + f / 2) % 3 == 0 )); then
-                bgtable_sty 255 236 160 "$r"
+                bgtable_sty 255 238 168 "$r"
                 put "$r" $(( cx + c )) "$STY" "◉"
             else
-                bgtable_sty 150 120 80 "$r"
+                bgtable_sty 148 118 78 "$r"
                 put "$r" $(( cx + c )) "$STY" "◦"
             fi
         done
     fi
 
-    # the centre column, and the platform it all stands on
-    for (( r=apex+5; r<=cy-1; r++ )); do
-        (( r < 1 )) && continue
-        bgtable_sty 214 190 140 "$r"
-        put "$r" $(( cx - 1 )) "$STY" "▐▌"
-    done
+    # the platform it all stands on
     for (( r=cy; r<=cy+1 && r<=H-1; r++ )); do
         half=$(( W/6 - (r - cy) * 2 ))
         (( half < 3 )) && half=3
@@ -3226,42 +3362,68 @@ scene_ok_carousel() {
         put "$r" $(( cx - half )) "$STY" "${TILE:0:$(( half * 2 + 1 ))}"
     done
 
-    # six horses on the turn: the phase decides both where they are across the
-    # ride and whether they are on the near side (low and bright) or the far
-    for (( i=0; i<6; i++ )); do
-        ph=$(( (f * 2 + i * 10) % 60 ))
-        x=$(( cx + (${SIN[$ph]} - 500) * (W/6) / 500 ))
+    # the near side, in front of everything: bigger, warmly lit, riding low
+    for (( i=0; i<8; i++ )); do
+        ph=$(( (f + i * 8) % 60 ))
         depth=${SIN[$(( (ph + 15) % 60 ))]}
-        bob=$(( (${SIN[$(( (f*4 + i*20) % 60 ))]} - 500) / 400 ))
-        if (( depth > 500 )); then
-            y=$(( cy - 2 + bob ))
-            g=240
-        else
-            y=$(( cy - 5 + bob ))
-            g=150
-        fi
-        # the pole the horse rides on
-        for (( r=y+2; r<=cy-1; r++ )); do
+        (( depth > 500 )) || continue
+        x=$(( cx + (${SIN[$ph]} - 500) * (W/6) / 500 ))
+        bob=$(( (${SIN[$(( (f*3 + i*15) % 60 ))]} - 500) / 340 ))
+        y=$(( cy - 4 + bob ))
+        # the brass pole it rides on, running the full height of the ride
+        for (( r=apex+6; r<=cy-1; r++ )); do
             (( r < 1 || r > H-1 )) && continue
-            bgtable_sty $(( g - 40 )) $(( g - 50 )) 110 "$r"
-            put "$r" $(( x + 1 )) "$STY" "│"
+            bgtable_sty 224 186 104 "$r"
+            put "$r" $(( x + 4 )) "$STY" "│"
         done
-        for n in 0 1; do
+        for n in 0 1 2 3; do
             r=$(( y + n ))
             (( r < 1 || r > H-1 )) && continue
-            if (( n == 0 )); then bgtable_sty "$g" $(( g - 30 )) $(( g - 90 )) "$r"
-            else bgtable_sty $(( g - 40 )) $(( g - 70 )) $(( g - 120 )) "$r"
-            fi
-            put "$r" "$x" "$STY" "${CAROUSEL_H[$n]}"
+            case $n in
+                0) bgtable_sty 250 240 222 "$r" ;;
+                1) bgtable_sty 244 230 206 "$r" ;;
+                2) bgtable_sty 234 216 186 "$r" ;;
+                *) bgtable_sty 206 184 156 "$r" ;;
+            esac
+            put "$r" "$x" "$STY" "${CAR_NEAR[$n]}"
         done
+        # saddle and bridle, so each horse has some colour of its own
+        r=$(( y + 2 ))
+        (( r >= 1 && r <= H-1 )) && {
+            case $(( i % 3 )) in
+                0) bgtable_sty 214 76 92 "$r" ;;
+                1) bgtable_sty 110 160 210 "$r" ;;
+                *) bgtable_sty 226 176 84 "$r" ;;
+            esac
+            put "$r" $(( x + 4 )) "$STY" "▬▬"
+            bgtable_sty 220 60 76 $(( y + 1 ))
+            put $(( y + 1 )) $(( x + 8 )) "$STY" "▪"
+        }
     done
 
-    # the light the ride throws down onto the fairground
-    tile_of "░▒░  ░ ▒" $(( W + 12 ))
+    # the light the ride throws down onto the fairground, brightest under it
+    tile_of "  ░   ░ " $(( W + 12 ))
     for (( r=cy+2; r<=H-1; r++ )); do
-        lum=$(( 120 - (r - cy) * 8 )); (( lum < 40 )) && lum=40
+        lum=$(( 96 - (r - cy) * 8 )); (( lum < 34 )) && lum=34
         bgtable_sty "$lum" $(( lum * 4 / 5 )) $(( lum / 2 )) "$r"
         put "$r" 1 "$STY" "${TILE:$(( (f/5 + r * 3) % 8 )):W}"
+        half=$(( W/6 - (r - cy) * 4 ))
+        if (( half > 2 )); then
+            tile_of "▒░▒ ░" $(( half * 2 + 6 ))
+            bgtable_sty $(( lum + 60 )) $(( lum + 34 )) $(( lum / 2 + 16 )) "$r"
+            put "$r" $(( cx - half )) "$STY" \
+                "${TILE:$(( (f/5 + r) % 5 )):$(( half * 2 + 1 ))}"
+        fi
+    done
+    # the crowd watching from the front, shifting on their feet
+    for (( i=0; i<7; i++ )); do
+        (( H - 2 > cy + 1 )) || break
+        x=$(( 2 + (i * 31 + i*i*13) % (W - 4) ))
+        sway=$(( (${SIN[$(( (f + i*17) % 60 ))]} - 500) / 460 ))
+        bgtable_sty 46 32 36 $(( H - 2 ))
+        put $(( H - 2 )) $(( x + sway )) "$STY" "▄"
+        bgtable_sty 36 25 30 $(( H - 1 ))
+        put $(( H - 1 )) "$x" "$STY" "▐▌"
     done
 
     top=$(( apex / 2 - 3 ))
@@ -3594,7 +3756,12 @@ scene_ok_desert() {
 # the frame. The frame, the sill, the skyline and everything standing on the
 # sill are fixed for a window size and rasterized once; the rain, the lights,
 # the flashes and the steam are all that move.
-WINDOW=""; WINDOW_KEY=""
+#
+# The cache comes in two halves: WINDOW is everything seen *through* the glass,
+# WINDOW_FG everything standing in front of it (frame, mullions, sill, boards,
+# mug, plant). The rain is drawn between them, so drops stay out in the night
+# instead of running down the woodwork and over the mug.
+WINDOW=""; WINDOW_FG=""; WINDOW_KEY=""
 
 # Anything drawn over the glass with a glyph that is not a solid block shows its
 # background through, and bgtable_sty would hand it the room's warm brown. These
@@ -3680,6 +3847,9 @@ build_window() { # py1 py2 px1 px2 sill skyline_row
         put "$r" "$px1" "$STY" "${TILE:0:$(( 4 - (r - py1) ))}"
         put "$r" $(( px2 - 3 + (r - py1) )) "$STY" "${TILE:0:$(( 4 - (r - py1) ))}"
     done
+    WINDOW=$OUT
+    # ---- foreground: everything indoors, drawn after the rain ----
+    OUT=""
     # the frame, and the two mullions crossing the pane
     tile_of "█" $(( wide + 6 ))
     for r in $(( py1 - 1 )) $(( py2 + 1 )); do
@@ -3739,7 +3909,7 @@ build_window() { # py1 py2 px1 px2 sill skyline_row
             put $(( r - 2 )) $(( px2 - 5 )) "$STY" "❦"
         }
     fi
-    WINDOW=$OUT
+    WINDOW_FG=$OUT
     OUT=$save
 }
 
@@ -3788,7 +3958,8 @@ scene_ok_window() {
           WINDOW_KEY="$H$W"; }
     OUT+=$WINDOW
     # from here on everything lands on the glass, so overlays resolve their
-    # backdrop from the pane table (rows off the pane fall back to the room)
+    # backdrop from the pane table (rows off the pane fall back to the room).
+    # The frame and the things on the sill go on last, over the top of the rain.
     BG_KIND=5
 
     # a storm going by somewhere out there: two flashes, close together, every
@@ -3807,16 +3978,7 @@ scene_ok_window() {
             pane_sty $(( ${PANE_R[$r]:-20} + lum )) $(( ${PANE_G[$r]:-26} + lum )) \
                      $(( ${PANE_B[$r]:-46} + lum + 10 )) "$r"
             put "$r" "$px1" "$STY" "${TILE:0:wide}"
-            # the fill covers the whole pane, mullion included: put it back
-            bgtable_sty 112 78 54 "$r"
-            put "$r" $(( (px1 + px2) / 2 )) "$STY" "▐▌"
         done
-        r=$(( (py1 + py2) / 2 ))
-        if (( r >= py1 && r < sk )); then
-            tile_of "▬" $(( wide + 2 ))
-            bgtable_sty 112 78 54 "$r"
-            put "$r" "$px1" "$STY" "${TILE:0:wide}"
-        fi
     fi
 
     # the town's windows, blurred into soft lights by the wet glass
@@ -3877,6 +4039,10 @@ scene_ok_window() {
             fi
         done
     done
+
+    # the room comes back over the top: frame, mullions, sill, boards, and the
+    # mug and plant standing on it, so nothing outside runs across them
+    OUT+=$WINDOW_FG
 
     # steam off the mug, curling as it goes up and thinning out
     for (( n=0; n<5; n++ )); do
