@@ -2,6 +2,8 @@
 # bacon-tui.sh — animated terminal dashboard for bacon
 #
 #   ./bacon-tui.sh [job]        # job defaults to `check`
+#   ./bacon-tui.sh --list-scenes        # every scene name, by state
+#   ./bacon-tui.sh --scene carousel     # preview one scene, no bacon needed
 #
 # It runs `bacon --headless` for you, telling bacon to auto-export a machine
 # readable report after every mission (`[exports.json_report]`), and tails
@@ -34,6 +36,7 @@
 # twice in a row.
 #
 # Keys: q quit · 1-4 switch job · r rerun · l cycle log view · p pause anim
+#       --scene mode: q quit · n/N next/prev scene · p pause anim
 #
 # Requires a truecolor terminal (iTerm2, WezTerm, Ghostty, Kitty, tmux with
 # `set -g allow-passthrough`/24-bit color, modern Terminal.app fallback ok).
@@ -63,7 +66,7 @@ case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
 esac
 
 JOBS=(check check-all clippy test)
-JOB=${1:-check}
+JOB=check
 REPORT=.bacon-report.json
 LOG=.bacon-tui.log
 FRAME_SLEEP=0.07
@@ -82,7 +85,51 @@ exporter = "json_report"
 path = ".bacon-report.json"
 '
 
-command -v bacon >/dev/null 2>&1 || { echo "bacon not found in PATH" >&2; exit 1; }
+# ------------------------------------------------------------------- args ----
+
+# SCENE_ONLY pins one variant and runs the loop without bacon, so a scene can be
+# looked at on its own. The variant tables live further down (they name functions
+# defined between here and there), so --scene only records the request; it is
+# resolved in main, once the tables exist.
+SCENE_ONLY=""
+LIST_SCENES=0
+
+usage() {
+    cat <<'EOF'
+usage: bacon-tui.sh [job] [options]
+
+  job                  bacon job to run: check (default), check-all, clippy, test
+
+  --scene NAME         skip bacon and show one scene on a loop, for previewing.
+                       NAME is a variant from --list-scenes, with or without its
+                       scene_ok_ / scene_fail_ prefix ("carousel", "fail:lava").
+                       Fail scenes are shown with a sample failure list.
+  --list-scenes        print every scene name, grouped by state, and exit
+  -h, --help           this message
+
+keys: q quit · 1-4 switch job · r rerun · l cycle log view · p pause anim
+      in --scene mode: n/N step to the next/previous scene of that state
+EOF
+}
+
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --scene)
+            [ $# -ge 2 ] || { echo "--scene needs a scene name" >&2; exit 2; }
+            SCENE_ONLY=$2; shift 2 ;;
+        --scene=*)   SCENE_ONLY=${1#*=}; shift ;;
+        --list-scenes) LIST_SCENES=1; shift ;;
+        -h|--help)   usage; exit 0 ;;
+        -*)          echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
+        *)           JOB=$1; shift ;;
+    esac
+done
+
+# --scene and --list-scenes never shell out to bacon, so they work anywhere
+if [ -z "$SCENE_ONLY" ] && (( ! LIST_SCENES )); then
+    command -v bacon >/dev/null 2>&1 ||
+        { echo "bacon not found in PATH" >&2; exit 1; }
+fi
 
 # sine lookup, 60 steps, scaled 0..999 (no floating point in bash)
 SIN=($(awk 'BEGIN{for(i=0;i<60;i++)printf "%d ",500+499*sin(6.28318530718*i/60)}'))
@@ -6873,6 +6920,66 @@ pick_scene() { # ok|fail
 scene_ok()   { "${OK_VARIANTS[$OK_PICK]}" "$1"; }
 scene_fail() { "${FAIL_VARIANTS[$FAIL_PICK]}" "$1"; }
 
+# --list-scenes: the tables are the source of truth, so nothing to keep in sync
+list_scenes() {
+    local v
+    echo "success scenes (--scene NAME):"
+    for v in "${OK_VARIANTS[@]}"; do echo "  ${v#scene_ok_}"; done
+    echo
+    echo "failure scenes (--scene NAME, or fail:NAME to disambiguate):"
+    for v in "${FAIL_VARIANTS[@]}"; do echo "  ${v#scene_fail_}"; done
+}
+
+# --scene NAME -> SCENE_STATE (ok|fail) plus the matching *_PICK index.
+# A bare name is looked up in both tables; an "ok:"/"fail:" prefix, or the full
+# function name, pins which table to search.
+resolve_scene() { # name
+    local want=$1 side="" i n
+    case "$want" in
+        ok:*)          side=ok;   want=${want#ok:} ;;
+        fail:*)        side=fail; want=${want#fail:} ;;
+        scene_ok_*)    side=ok;   want=${want#scene_ok_} ;;
+        scene_fail_*)  side=fail; want=${want#scene_fail_} ;;
+    esac
+    if [ "$side" != fail ]; then
+        n=${#OK_VARIANTS[@]}
+        for (( i=0; i<n; i++ )); do
+            if [ "${OK_VARIANTS[$i]#scene_ok_}" = "$want" ]; then
+                SCENE_STATE=ok; OK_PICK=$i; return 0
+            fi
+        done
+    fi
+    if [ "$side" != ok ]; then
+        n=${#FAIL_VARIANTS[@]}
+        for (( i=0; i<n; i++ )); do
+            if [ "${FAIL_VARIANTS[$i]#scene_fail_}" = "$want" ]; then
+                SCENE_STATE=fail; FAIL_PICK=$i; return 0
+            fi
+        done
+    fi
+    return 1
+}
+
+# n/N in --scene mode: step through that state's table, wrapping round
+step_scene() { # +1|-1
+    local n
+    if [ "$SCENE_STATE" = ok ]; then
+        n=${#OK_VARIANTS[@]}
+        OK_PICK=$(( (OK_PICK + $1 + n) % n ))
+    else
+        n=${#FAIL_VARIANTS[@]}
+        FAIL_PICK=$(( (FAIL_PICK + $1 + n) % n ))
+    fi
+    BG_KEY=""       # the incoming variant rebuilds its own backdrop table
+}
+
+# the name currently on screen, for the status bar in --scene mode
+scene_name() {
+    if [ "$SCENE_STATE" = ok ]; then SCENE_NAME=${OK_VARIANTS[$OK_PICK]#scene_ok_}
+    else SCENE_NAME=${FAIL_VARIANTS[$FAIL_PICK]#scene_fail_}
+    fi
+}
+
 # ----------------------------------------------------------- building scene --
 
 scene_building() {
@@ -6977,8 +7084,16 @@ status_bar() {
     esac
     local warn=""
     (( WARNINGS > 0 )) && warn=" · ${WARNINGS} warning(s)"
-    local left=" ${PROJECT} │ ${JOB} │ ${icon}${warn} │ ${AGE}s ago "
-    local right=" q quit · 1-4 job · r rerun · l log · p pause "
+    local left right
+    if [ -n "${SCENE_STATE:-}" ]; then
+        # preview mode: the scene name is the useful thing, not the build
+        scene_name
+        left=" ${PROJECT} │ preview │ ${icon} │ ${SCENE_NAME} "
+        right=" q quit · n/N scene · p pause "
+    else
+        left=" ${PROJECT} │ ${JOB} │ ${icon}${warn} │ ${AGE}s ago "
+        right=" q quit · 1-4 job · r rerun · l log · p pause "
+    fi
     local pad=$(( W - ${#left} - ${#right} ))
     (( pad < 0 )) && { right=""; pad=$(( W - ${#left} )); }
     (( pad < 0 )) && pad=0
@@ -6986,6 +7101,18 @@ status_bar() {
 }
 
 # ------------------------------------------------------------------ main -----
+
+# plain stdout, no terminal needed: safe to pipe or grep
+(( LIST_SCENES )) && { list_scenes; exit 0; }
+
+SCENE_STATE=""
+if [ -n "$SCENE_ONLY" ]; then
+    resolve_scene "$SCENE_ONLY" || {
+        echo "unknown scene: $SCENE_ONLY" >&2
+        echo "try --list-scenes" >&2
+        exit 2
+    }
+fi
 
 TTY=/dev/tty
 if ! { : <"$TTY"; } 2>/dev/null; then
@@ -7014,19 +7141,37 @@ SCENE_H=0
 PREV_OUT=""
 REDRAW=1
 # roll the first variant of each kind, so a run does not always open the same way
-OK_PICK=$(( RANDOM % ${#OK_VARIANTS[@]} ))
-FAIL_PICK=$(( RANDOM % ${#FAIL_VARIANTS[@]} ))
+# (--scene already pinned its pick, so leave that one alone)
+[ "$SCENE_STATE" = ok ]   || OK_PICK=$(( RANDOM % ${#OK_VARIANTS[@]} ))
+[ "$SCENE_STATE" = fail ] || FAIL_PICK=$(( RANDOM % ${#FAIL_VARIANTS[@]} ))
 
 printf '\033[?1049h\033[?25l\033[2J'
 term_size
 start_reader
-start_bacon
+if [ -n "$SCENE_STATE" ]; then
+    # preview mode: no build to watch, so fake the state the scene wants. Fail
+    # scenes draw a list of failing items, so give them something to show.
+    STATE=$SCENE_STATE; PREV_STATE=$SCENE_STATE
+    if [ "$SCENE_STATE" = fail ]; then
+        ERRORS=3; WARNINGS=2; TEST_FAILS=1
+        ITEMS=("cannot find value \`kettle\` in this scope"
+               "  src/main.rs:42:9"
+               "mismatched types: expected \`Scene\`, found \`Option<Scene>\`"
+               "  src/render.rs:118:22"
+               "unused variable: \`carousel\`"
+               "  src/scene.rs:7:5")
+    fi
+else
+    start_bacon
+fi
 
 while :; do
     (( RESIZED )) && { RESIZED=0; term_size; REDRAW=1; PREV_OUT=""; }
 
     # ---- poll state (cheap: only when the report actually changed) ----
-    if (( FRAME % POLL_EVERY == 0 )); then
+    # In --scene mode there is no bacon and no report, so STATE is fixed and the
+    # whole poll / hold / variant-roll block is skipped.
+    if [ -z "$SCENE_STATE" ] && (( FRAME % POLL_EVERY == 0 )); then
         mt=$(stat -f %m "$REPORT" 2>/dev/null || echo 0)
         if [ "$mt" != "$REPORT_MTIME" ]; then
             REPORT_MTIME=$mt
@@ -7057,7 +7202,8 @@ while :; do
         kill -0 "$BACON_PID" 2>/dev/null || { CMD_ERROR=1; ERRORS=1; }
     fi
 
-    if (( BUILDING )); then STATE=building
+    if [ -n "$SCENE_STATE" ]; then STATE=$SCENE_STATE
+    elif (( BUILDING )); then STATE=building
     elif (( ERRORS > 0 || TEST_FAILS > 0 || CMD_ERROR )); then STATE=fail
     else STATE=ok
     fi
@@ -7119,14 +7265,20 @@ while :; do
         case "$key" in
             q|Q) cleanup ;;
             p|P) PAUSED=$(( 1 - PAUSED )) ;;
-            r|R) start_bacon; REDRAW=1 ;;
-            l|L) case "$VIEW" in
+            # rerun, job switch and the log view all need a bacon behind them,
+            # so in --scene mode n/N step through the scenes instead
+            n) [ -n "$SCENE_STATE" ] && { step_scene 1; REDRAW=1; } ;;
+            N) [ -n "$SCENE_STATE" ] && { step_scene -1; REDRAW=1; } ;;
+            r|R) [ -n "$SCENE_STATE" ] || { start_bacon; REDRAW=1; } ;;
+            l|L) [ -n "$SCENE_STATE" ] && continue
+                 case "$VIEW" in
                      scene) VIEW=split ;;
                      split) VIEW=log ;;
                      *)     VIEW=scene ;;
                  esac
                  LOG_DIRTY=1; REDRAW=1 ;;
-            1|2|3|4) JOB=${JOBS[$(( key - 1 ))]}; start_bacon; REDRAW=1 ;;
+            1|2|3|4) [ -n "$SCENE_STATE" ] ||
+                     { JOB=${JOBS[$(( key - 1 ))]}; start_bacon; REDRAW=1; } ;;
         esac
     done
 
