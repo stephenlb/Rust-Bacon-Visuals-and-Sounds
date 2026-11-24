@@ -409,6 +409,101 @@ fill_row() { # row r g b
     OUT+=$'\033['"$1;1H"$'\033[39m\033[48;2;'"$2;$3;$4"m"$SPACES"
 }
 
+# OUT is painted back to front: sky fills first, sprites and text on top much
+# later. Terminals that honour mode 2026 swap the finished frame, but tmux
+# (3.5 at least) ignores 2026 inside a pane and redraws whatever it has read
+# so far. A fill followed by the sprite that sits on it therefore shows, for a
+# moment, the bare fill: the cream top row of the BUILDING banner blinked.
+#
+# compose_frame resolves the layers before anything is written. Every OUT
+# segment is `ESC[row;colH` + SGR + text; segments are grouped by row, each
+# later one clips whatever it covers, and the survivors are sent so each cell
+# is written once, with its final look. Rows identical to what is already on
+# screen are not sent at all.
+#   OUT -> FRAME_OUT (may be empty: nothing changed)
+PREV_ROW=()
+SEG_STRIDE=1024                      # segment slots per row
+SC=(); SE=(); SS=(); ST=(); NSEG=()  # start col, end col (excl.), style, text
+
+# add the segment (r c sty txt) to its row, clipping what it paints over.
+# Reads the caller's locals (bash dynamic scope).
+seg_add() {
+    [ -n "$txt" ] && [ -n "$r" ] || return 0
+    local e k n b sc se t
+    e=$(( c + ${#txt} )); b=$(( r * SEG_STRIDE )); n=${NSEG[r]:-0}
+    for (( k=0; k<n; k++ )); do
+        se=${SE[b+k]}
+        (( se <= c )) && continue            # dead, or entirely to the left
+        sc=${SC[b+k]}
+        (( sc >= e )) && continue            # entirely to the right
+        t=${ST[b+k]}
+        if (( sc < c )); then
+            if (( se > e )); then            # new one sits inside: keep both ends
+                SC[b+n]=$e; SE[b+n]=$se; SS[b+n]=${SS[b+k]}; ST[b+n]=${t:e-sc}
+                n=$(( n + 1 ))
+            fi
+            ST[b+k]=${t:0:c-sc}; SE[b+k]=$c
+        elif (( se > e )); then
+            SC[b+k]=$e; ST[b+k]=${t:e-sc}
+        else
+            SE[b+k]=0                        # fully covered
+        fi
+    done
+    SC[b+n]=$c; SE[b+n]=$e; SS[b+n]=$sty; ST[b+n]=$txt
+    NSEG[r]=$(( n + 1 ))
+}
+
+compose_frame() {
+    # split on the bare ESC byte via IFS: `${OUT//$'\033['/...}` would be
+    # quadratic on UTF-8 text in bash 3.2 (over a second per frame)
+    local IFS=$'\033' part i hd pre sg mv r="" c=0 sty="" txt="" s k b
+    local -a parts
+    NSEG=()
+    set -f
+    parts=($OUT)
+    set +f
+    FRAME_OUT=${parts[0]:-}          # anything ahead of the first escape
+    for (( i=1; i<${#parts[@]}; i++ )); do
+        part=${parts[i]}             # "[row;colH", "[38;2;…m<text>", "[2J"
+        sg=0
+        case $part in
+            \[*m*) pre=${part%%m*}; pre=${pre#\[}
+                   case $pre in *[!0-9\;]*) : ;; *) sg=1 ;; esac ;;
+        esac
+        if (( sg )); then
+            if [ -n "$txt" ]; then       # style change mid-text: split there
+                seg_add; c=$(( c + ${#txt} )); txt=""
+            fi
+            sty+=$'\033'"${part%%m*}m"; txt=${part#*m}
+            continue
+        fi
+        mv=0
+        case $part in
+            *H*) hd=${part%%H*}; hd=${hd#\[}
+                 case $hd in *[!0-9\;]*|'') : ;; *\;*) mv=1 ;; esac ;;
+        esac
+        if (( mv )); then
+            seg_add
+            r=${hd%%;*}; c=${hd#*;}; sty=""; txt=${part#*H}
+        else
+            FRAME_OUT+=$'\033'"$part"    # ESC[2J and friends
+        fi
+    done
+    seg_add
+    (( ${#NSEG[@]} )) || return 0     # bash 3.2 + set -u: empty "${!a[@]}" errors
+    for r in "${!NSEG[@]}"; do
+        s=""; b=$(( r * SEG_STRIDE ))
+        for (( k=0; k<NSEG[r]; k++ )); do
+            (( SE[b+k] > 0 )) &&
+                s+=$'\033[0m\033['"$r;${SC[b+k]}H${SS[b+k]}${ST[b+k]}"
+        done
+        if [ "$s" != "${PREV_ROW[r]:-}" ]; then
+            FRAME_OUT+=$s
+            PREV_ROW[r]=$s
+        fi
+    done
+}
+
 center() { # -> COL for a string length
     COL=$(( (W - $1) / 2 + 1 ))
     (( COL < 1 )) && COL=1
@@ -7245,7 +7340,7 @@ while :; do
     esac
 
     OUT=""
-    (( REDRAW )) && { OUT=$'\033[2J'; REDRAW=0; }
+    (( REDRAW )) && { OUT=$'\033[2J'; REDRAW=0; PREV_ROW=(); }
     case "$VIEW" in
         log) draw_log 1 ;;
         split)
@@ -7258,9 +7353,11 @@ while :; do
     status_bar "$STATE"
 
     # One synchronized write per frame: the terminal never shows a half-painted
-    # scene. Identical frames (paused, idle) are not written at all.
+    # scene. Identical frames (paused, idle) are not written at all, and only
+    # the rows that changed go out (see compose_frame — tmux needs this).
     if [ "$OUT" != "$PREV_OUT" ]; then
-        printf '\033[?2026h%s\033[?2026l' "$OUT"
+        compose_frame
+        [ -n "$FRAME_OUT" ] && printf '\033[?2026h%s\033[?2026l' "$FRAME_OUT"
         PREV_OUT=$OUT
     fi
 
